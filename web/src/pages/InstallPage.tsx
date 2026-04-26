@@ -89,8 +89,8 @@ export function InstallPage() {
             </ul>
             <div className="mt-8 rounded-3xl border border-white/10 bg-white/6 p-5 text-sm leading-7 text-stone-300">
               Pixie keeps the Discord trigger surface narrow: direct bot
-              mention, reply-to-bot, or slash command.
-              There is no channel-specific routing requirement.
+              mention, reply-to-bot, or slash command. There is no
+              channel-specific routing requirement.
             </div>
           </aside>
         </section>

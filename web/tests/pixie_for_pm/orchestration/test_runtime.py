@@ -102,4 +102,6 @@ async def test_orchestrator_keeps_handoffs_out_of_the_public_transcript(
         AgentRole.PRODUCT_MANAGER,
         AgentRole.MARKET_ANALYST,
     ]
-    assert all("handoff" not in message.content.lower() for message in result.transcript)
+    assert all(
+        "handoff" not in message.content.lower() for message in result.transcript
+    )

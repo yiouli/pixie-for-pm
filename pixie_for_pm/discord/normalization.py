@@ -10,7 +10,9 @@ def detect_direct_bot_mention(content: str, *, bot_user_id: int | None) -> bool:
     return any(token.casefold() in normalized_content for token in direct_mentions)
 
 
-def detect_reply_to_bot(*, reply_author_id: int | None, bot_user_id: int | None) -> bool:
+def detect_reply_to_bot(
+    *, reply_author_id: int | None, bot_user_id: int | None
+) -> bool:
     return (
         reply_author_id is not None
         and bot_user_id is not None

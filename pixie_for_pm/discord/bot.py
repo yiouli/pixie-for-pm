@@ -25,7 +25,9 @@ def should_dispatch_message(
 
 
 def compose_public_reply(transcript: Sequence[AgentMessage]) -> str:
-    messages = [message.content.strip() for message in transcript if message.content.strip()]
+    messages = [
+        message.content.strip() for message in transcript if message.content.strip()
+    ]
     if not messages:
         raise RuntimeError("Orchestrator returned no user-visible messages.")
     return "\n\n".join(messages)
