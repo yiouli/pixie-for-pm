@@ -662,23 +662,22 @@ typescript, vite, @vitejs/plugin-react, vitest
 
 ## 10. Entrypoints
 
-The project currently has one entrypoint: `pixie-discord-bot`.
-
-Add a second entrypoint in `pyproject.toml`:
+The project exposes three runtime entrypoints in `pyproject.toml` plus a
+deployment entrypoint for Vercel:
 
 ```toml
 [project.scripts]
-pixie-discord-bot = "pixie_for_pm.discord.bot:main"
-pixie-web-server = "pixie_for_pm.web.app:main"     # ← NEW
+pixie = "pixie_for_pm.main:main"                   # pixie
 ```
 
-The web server runs independently from the Discord bot. In dev:
+Use them like this:
 
 ```bash
-uv run pixie-web-server        # FastAPI on port 8000
-cd web && npm run dev           # Vite on port 5173
-uv run pixie-discord-bot       # Discord bot (existing)
+uv run pixie             # FastAPI + Discord bot in one long-lived process
 ```
+
+For Vercel, deploy `api/index.py`, which exposes the ASGI app without starting
+the Discord gateway client.
 
 ---
 
@@ -686,7 +685,7 @@ uv run pixie-discord-bot       # Discord bot (existing)
 
 1. **Supabase project setup** — create project and run `migrations/001_servers_and_connections.sql`
 2. **Config updates** — add new env vars to `pixie_for_pm/config/settings.py` and `.env.example`
-3. **`pixie_for_pm/web/` skeleton** — FastAPI app, CORS, health check, `pixie-web-server` entrypoint
+3. **`pixie_for_pm/web/` skeleton** — FastAPI app, CORS, health check, web/runtime entrypoints
 4. **Auth layer** — Discord session cookie dependency, `GET /api/auth/me`, `GET /api/auth/discord`
 5. **Frontend skeleton** — Vite + React + Router + SettingsPage with backend-owned Discord OAuth redirect
 6. **Server ownership** — `POST /api/servers/{id}/claim`, `GET /api/servers/{id}`, SettingsPage claim-on-first-visit flow

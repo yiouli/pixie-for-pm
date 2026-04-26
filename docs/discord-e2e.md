@@ -42,14 +42,14 @@ In the Discord Developer Portal:
 
 ## 3. Install the Bot Through the Pixie Web App
 
-Build the frontend once and start the web server:
+Build the frontend once and start the combined runtime:
 
 ```bash
 cd web
 npm install
 npm run build
 cd ..
-uv run pixie-web-server
+uv run pixie
 ```
 
 Then, in a browser:
@@ -98,14 +98,14 @@ CONNECTION_STORE_SQLITE_PATH=.state/pixie-connection-store.sqlite
 LANGGRAPH_CHECKPOINT_PATH=.state/pixie-langgraph.sqlite
 ```
 
-For local runs without Supabase, `CONNECTION_STORE_SQLITE_PATH` is how the web app and the bot share claimed servers and credentials across separate processes.
+For local runs without Supabase, `CONNECTION_STORE_SQLITE_PATH` is how the web app and the bot share claimed servers and credentials across the combined runtime or across separate processes.
 
-## 7. Start the Bot
+## 7. Start Pixie
 
 Run:
 
 ```bash
-uv run pixie-discord-bot
+uv run pixie
 ```
 
 Keep that terminal open while testing in Discord.
@@ -197,7 +197,7 @@ If the bot does not respond:
 - verify `Message Content Intent` is enabled
 - verify you explicitly mentioned the bot or replied to one of the bot's prior messages
 - verify the bot can read and send messages in the test channel
-- verify you started the bot from the repository root with `uv run pixie-discord-bot`
+- verify you started Pixie from the repository root with `uv run pixie`
 
 If persistence is not created:
 
@@ -208,7 +208,7 @@ If persistence is not created:
 
 For a quick smoke test, use this order:
 
-1. start the bot
+1. start Pixie
 2. run `/settings` once and open the settings page
 3. send one bot mention and confirm the product manager response
 4. reply to the bot and confirm the follow-up response

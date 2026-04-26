@@ -221,3 +221,6 @@ __marimo__/
 dist/
 build/
 node_modules/
+
+# Local environment
+.state

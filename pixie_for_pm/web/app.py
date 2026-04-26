@@ -1,19 +1,26 @@
 """Settings web server for Pixie PM.
 
 This module provides :func:`create_app`, an injectable factory that assembles
-the FastAPI application, and :func:`main`, the entry point registered as
-``pixie-web-server`` in ``pyproject.toml``. When a built front-end bundle is
+the FastAPI application, and :func:`main`, the web-only entry point registered
+as ``pixie-web-server`` in ``pyproject.toml``. When a built front-end bundle is
 present in ``web/dist``, the same FastAPI process serves that SPA and falls
 back to ``index.html`` for client-side routes.
 
 Architecture
 ------------
 The web server exposes a settings API for Discord server owners to connect
-external tools (Notion, GitHub, PostHog, etc.) to their server.  It is a
-Python process that runs **alongside** the Discord bot process.  Both processes
-can share the same :class:`~pixie_for_pm.web.store.ConnectionStore` backend
-(Supabase or local SQLite) and :class:`~pixie_for_pm.web.encryption.CredentialCipher`
-directly in Python code — no HTTP bridge is needed.
+external tools (Notion, GitHub, PostHog, etc.) to their server. It can run in
+two modes:
+
+- combined mode via ``pixie``, where FastAPI owns the Discord bot task in
+    the same long-lived process
+- web-only mode via ``pixie-web-server`` or ``api/index.py`` for deploy targets
+    such as Vercel that should not boot the Discord gateway client
+
+Both modes share the same
+:class:`~pixie_for_pm.web.store.ConnectionStore` backend (Supabase or local
+SQLite) and :class:`~pixie_for_pm.web.encryption.CredentialCipher` directly in
+Python code — no HTTP bridge is needed.
 
 Authentication
 --------------
@@ -58,6 +65,8 @@ Required environment variables
 
 from __future__ import annotations
 
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -83,6 +92,7 @@ from pixie_for_pm.web.session import SessionCodec
 from pixie_for_pm.web.store import build_connection_store
 
 if TYPE_CHECKING:
+    from pixie_for_pm.discord.bot import DiscordRuntime
     from pixie_for_pm.web.providers.api_key import ApiKeyValidator
     from pixie_for_pm.web.providers.discord_login import DiscordLoginService
     from pixie_for_pm.web.providers.oauth import OAuthService
@@ -115,6 +125,8 @@ def create_app(
     api_key_validator: ApiKeyValidator | None = None,
     oauth_service: OAuthService | None = None,
     frontend_dist_dir: Path | None = None,
+    discord_runtime: DiscordRuntime | None = None,
+    enable_discord_bot: bool = False,
 ) -> FastAPI:
     """Assemble and return the FastAPI application.
 
@@ -170,7 +182,24 @@ def create_app(
         credential_cipher=CredentialCipher(settings.credentials_encryption_key),
     )
 
-    app = FastAPI(title="Pixie PM Settings API")
+    runtime_discord_bot = discord_runtime
+    if runtime_discord_bot is None and enable_discord_bot:
+        from pixie_for_pm.discord.bot import ManagedDiscordRuntime
+
+        runtime_discord_bot = ManagedDiscordRuntime(settings)
+
+    @asynccontextmanager
+    async def lifespan(_: FastAPI) -> AsyncIterator[None]:
+        if enable_discord_bot and runtime_discord_bot is not None:
+            await runtime_discord_bot.start()
+
+        try:
+            yield
+        finally:
+            if enable_discord_bot and runtime_discord_bot is not None:
+                await runtime_discord_bot.stop()
+
+    app = FastAPI(title="Pixie PM Settings API", lifespan=lifespan)
     app.state.services = services
 
     if settings.web_app_url is not None:

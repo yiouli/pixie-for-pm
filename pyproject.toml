@@ -21,8 +21,7 @@ dependencies = [
 ]
 
 [project.scripts]
-pixie-discord-bot = "pixie_for_pm.main:main"
-pixie-web-server = "pixie_for_pm.web.app:main"
+pixie = "pixie_for_pm.main:main"
 
 [dependency-groups]
 dev = [

@@ -90,8 +90,7 @@ cp .env.example .env
 uv run pytest
 uv run mypy .
 uv run ruff check .
-uv run pixie-web-server
-uv run pixie-discord-bot
+uv run pixie
 ```
 
 To run the settings UI locally:
@@ -102,7 +101,7 @@ npm install
 npm run build
 ```
 
-For active web development, run the frontend build in watch mode in one terminal and the FastAPI server in another:
+For active web development, run the frontend build in watch mode in one terminal and the combined backend in another:
 
 ```bash
 cd web
@@ -112,6 +111,12 @@ npm run watch
 
 ```bash
 uv run pixie-web-server
+```
+
+Or run the full local runtime, including the Discord bot, with:
+
+```bash
+uv run pixie
 ```
 
 Open `http://localhost:8000`. FastAPI serves the latest files from `web/dist`, so refreshing the page picks up each watched rebuild. `npm run dev` is no longer the default local workflow for this repo.
@@ -124,7 +129,9 @@ Create `web/.env` from `web/.env.example`. Leave `VITE_API_URL` empty to use the
 
 The bot entrypoint expects a populated `.env` file or equivalent environment variables. The current agent handlers are intentionally placeholder implementations and should be replaced with real prompts, tool calls, and handoff logic as the project grows.
 
-The settings API expects session and encryption keys plus OAuth client credentials. Supabase remains optional; when it is not configured, both the web app and bot default to the shared local SQLite store at `CONNECTION_STORE_SQLITE_PATH` so local end-to-end flows work across separate processes.
+The settings API expects session and encryption keys plus OAuth client credentials. Supabase remains optional; when it is not configured, both the web app and bot default to the shared local SQLite store at `CONNECTION_STORE_SQLITE_PATH` so local end-to-end flows work across a single combined process or separate processes.
+
+For Vercel, deploy the ASGI app exposed at `api/index.py`. That deployment surface serves FastAPI and the built SPA, but it intentionally does not start the long-lived Discord gateway client.
 
 To validate the browser-visible install flow locally, run:
 
