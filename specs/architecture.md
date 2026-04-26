@@ -17,10 +17,11 @@ The first surface is a single public Discord bot. The second surface is a settin
 1. A user explicitly addresses the bot in a guild message by mentioning the bot account or replying to a prior bot message.
 2. The Discord adapter normalizes the incoming message into a typed `IncomingDiscordMessage`.
 3. Routing converts the message into a `DispatchRequest` that enters the product manager entrypoint.
-4. The LangGraph runtime loads or creates thread state using the configured SQLite checkpoint store.
-5. The selected placeholder agent executes.
-6. If the execution returns handoffs, the graph routes to the next internal agent without emitting a public Discord handoff message.
-7. The current turn’s messages are returned to the Discord transport for publication as a single public bot reply.
+4. The orchestrator derives a typed Discord trigger context, resolves the guild's active integrations, and expands them into a request-scoped tool bundle built from `langchain_core` tools.
+5. The LangGraph runtime loads or creates thread state using the configured SQLite checkpoint store.
+6. The selected placeholder agent executes with access to the typed trigger context and initialized tool bundle.
+7. If the execution returns handoffs, the graph routes to the next internal agent without emitting a public Discord handoff message.
+8. The current turn’s messages are returned to the Discord transport for publication as a single public bot reply.
 
 ## Discord Install Flow
 
@@ -46,9 +47,8 @@ The scaffold is no longer single-guild at the install or `/settings` level. The 
 7. The web app calls `POST /api/servers/{discord_server_id}/claim` to record ownership.
 8. The FastAPI API validates ownership on every subsequent settings mutation.
 9. OAuth and API-key provider credentials are stored as per-server connection records in the connection store (Supabase in production, local SQLite in local runs).
-10. The Discord bot's agent runtime accesses decrypted credentials **directly in Python**
-    via `pixie_for_pm.integrations.credentials.get_credentials(discord_server_id, provider,
-store=store, cipher=cipher)` — no HTTP bridge is needed.
+10. The Discord bot's agent runtime resolves decrypted credentials **directly in Python**
+    from the shared store, expands each active provider into a request-scoped tool bundle, and passes those tool objects into agent execution without serializing them into LangGraph checkpoints.
 
 ## State Model
 
@@ -78,7 +78,7 @@ Outbound publication:
 ## Extension Points
 
 - Replace placeholder handlers in `pixie_for_pm/agents/registry.py` with real agent implementations.
-- Add richer MCP-backed adapters under `pixie_for_pm/integrations/` on top of the shared credential accessor.
+- Replace the default MCP invoker with provider-specific transport adapters under `pixie_for_pm/integrations/` while keeping the typed toolset initializer stable.
 - Extend the FastAPI settings layer with live Supabase-backed persistence, token refresh, and provider-specific validation hardening.
 - Enrich the Discord adapter with thread ownership and richer error translation.
 - Swap SQLite persistence for another LangGraph-supported checkpoint backend when deployment requirements change.

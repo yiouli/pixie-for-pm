@@ -16,6 +16,7 @@ from pixie_for_pm.domain.models import (
     DispatchRequest,
     WorkflowContext,
 )
+from pixie_for_pm.integrations.toolset import AgentToolset, DiscordTriggerContext
 
 
 class SerializedAgentMessage(TypedDict):
@@ -95,21 +96,33 @@ def _serialize_handoffs(handoffs: list[AgentHandoff]) -> list[SerializedAgentHan
     ]
 
 
-def _to_context(state: WorkflowState, role: AgentRole) -> WorkflowContext:
+def _to_context(
+    state: WorkflowState,
+    role: AgentRole,
+    *,
+    trigger: DiscordTriggerContext,
+    toolset: AgentToolset,
+) -> WorkflowContext:
     return WorkflowContext(
         thread_key=state["thread_key"],
         current_agent=role,
         user_message=state["user_message"],
         transcript=tuple(deserialize_transcript(state["transcript"])),
+        trigger=trigger,
+        toolset=toolset,
     )
 
 
 def _agent_node(
-    role: AgentRole, handlers: Mapping[AgentRole, AgentHandler]
+    role: AgentRole,
+    handlers: Mapping[AgentRole, AgentHandler],
+    *,
+    trigger: DiscordTriggerContext,
+    toolset: AgentToolset,
 ) -> AgentNode:
     async def _run_agent(state: WorkflowState) -> dict[str, object]:
         execution: AgentExecution = await handlers[role](
-            _to_context(state=state, role=role)
+            _to_context(state=state, role=role, trigger=trigger, toolset=toolset)
         )
         serialized_messages = _serialize_messages(execution.messages)
         return {
@@ -163,6 +176,9 @@ async def _handoff_node(state: WorkflowState) -> dict[str, object]:
 def build_workflow_graph(
     handlers: Mapping[AgentRole, AgentHandler],
     checkpointer: AsyncSqliteSaver,
+    *,
+    trigger: DiscordTriggerContext,
+    toolset: AgentToolset,
 ) -> AsyncWorkflowGraph:
     builder = StateGraph(WorkflowState)
     builder.add_node("dispatch", _dispatch_node)
@@ -170,7 +186,16 @@ def build_workflow_graph(
 
     for role in AgentRole:
         builder.add_node(
-            role.value, cast(Any, _agent_node(role=role, handlers=handlers))
+            role.value,
+            cast(
+                Any,
+                _agent_node(
+                    role=role,
+                    handlers=handlers,
+                    trigger=trigger,
+                    toolset=toolset,
+                ),
+            ),
         )
 
     builder.add_edge(START, "dispatch")

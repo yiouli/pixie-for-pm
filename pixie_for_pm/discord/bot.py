@@ -15,6 +15,7 @@ from pixie_for_pm.discord.normalization import (
 )
 from pixie_for_pm.discord.routing import build_dispatch_request
 from pixie_for_pm.domain.models import AgentMessage, IncomingDiscordMessage
+from pixie_for_pm.integrations.toolset import build_toolset_initializer
 from pixie_for_pm.orchestration.runtime import PixieOrchestrator
 
 
@@ -47,7 +48,10 @@ class PixieDiscordBot(discord.Client):
         intents.message_content = True
         super().__init__(intents=intents)
         self._settings = settings
-        self._orchestrator = PixieOrchestrator(settings.langgraph_checkpoint_path)
+        self._orchestrator = PixieOrchestrator(
+            settings.langgraph_checkpoint_path,
+            toolset_initializer=build_toolset_initializer(settings),
+        )
         self.tree = app_commands.CommandTree(self)
         install_settings_command(self.tree, settings)
         self._ready_guild_sync_complete = False
@@ -98,9 +102,14 @@ class PixieDiscordBot(discord.Client):
         *,
         bot_user_id: int | None,
     ) -> IncomingDiscordMessage:
+        guild = message.guild
+        if guild is None:
+            raise RuntimeError("Guild context is required for Discord dispatch.")
+
         thread = self._message_thread(message)
         return IncomingDiscordMessage(
             discord_message_id=message.id,
+            discord_server_id=str(guild.id),
             channel_id=message.channel.id,
             thread_id=str(thread.id) if thread is not None else None,
             author_id=message.author.id,

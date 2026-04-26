@@ -2,6 +2,10 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from enum import StrEnum
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from pixie_for_pm.integrations.toolset import AgentToolset, DiscordTriggerContext
 
 
 class AgentRole(StrEnum):
@@ -19,6 +23,7 @@ class AgentRole(StrEnum):
 @dataclass(frozen=True)
 class IncomingDiscordMessage:
     discord_message_id: int
+    discord_server_id: str
     channel_id: int
     thread_id: str | None
     author_id: int
@@ -59,6 +64,8 @@ class WorkflowContext:
     current_agent: AgentRole
     user_message: str
     transcript: tuple[AgentMessage, ...]
+    trigger: DiscordTriggerContext
+    toolset: AgentToolset
 
 
 @dataclass(frozen=True)

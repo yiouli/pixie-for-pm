@@ -49,9 +49,10 @@ The runtime flow is:
 1. Discord receives a message that explicitly addresses the bot through a bot mention or a reply to a prior bot message.
 2. The Discord adapter normalizes message content into a typed dispatch request.
 3. Routing enters the product manager entrypoint while preserving whether the trigger was a direct mention or a reply.
-4. LangGraph invokes the internal agents it needs and persists checkpoint state to SQLite.
-5. Internal handoffs stay inside the orchestration graph instead of being emitted as Discord messages.
-6. The Discord adapter publishes a single bot reply for the turn. Slash-command follow-up state is delivered through deferred interaction responses.
+4. The orchestrator resolves the guild-scoped integration connections, expands them into a typed LangGraph tool bundle for the turn, and keeps those live tool objects out of checkpoint state.
+5. LangGraph invokes the internal agents it needs and persists checkpoint state to SQLite.
+6. Internal handoffs stay inside the orchestration graph instead of being emitted as Discord messages.
+7. The Discord adapter publishes a single bot reply for the turn. Slash-command follow-up state is delivered through deferred interaction responses.
 
 The Discord install flow is:
 
@@ -68,7 +69,7 @@ The integration settings flow is:
 3. FastAPI serves the built SPA from `web/dist`, and the browser loads the settings UI from the same origin as the API.
 4. The settings UI establishes a Discord-backed session and claims the Discord server for the current app user.
 5. The FastAPI server stores encrypted connection credentials in the shared connection store.
-6. The bot and agent-side integrations read the same shared store, keyed by Discord server ID.
+6. The bot initializes a request-scoped integration toolset from that shared store, keyed by Discord server ID, before each LangGraph dispatch.
 
 ## Persistence
 
@@ -151,5 +152,6 @@ This scaffold now covers the first integration-management slice:
 - Credentials are encrypted before storage and decrypted only on the internal server-to-server path.
 - The web frontend provides the initial settings UX for OAuth and API-key providers.
 - Agent handlers still use placeholder business logic, and live storage/provider wiring should be verified in deployment.
+- Each Discord-triggered turn now gets a typed integration tool bundle that can be passed directly to LangGraph agents as tools.
 
-See `specs/architecture.md` and `specs/integration-config.md` for the implementation outline and extension points.
+See [specs/architecture.md](/home/yiouli/repo/pixie-for-pm/specs/architecture.md), [specs/integration-config.md](/home/yiouli/repo/pixie-for-pm/specs/integration-config.md), and [specs/agent-runtime-tooling.md](/home/yiouli/repo/pixie-for-pm/specs/agent-runtime-tooling.md) for the implementation outline and extension points.

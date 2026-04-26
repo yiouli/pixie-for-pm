@@ -23,6 +23,7 @@ def _message(
 ) -> IncomingDiscordMessage:
     return IncomingDiscordMessage(
         discord_message_id=1,
+        discord_server_id="discord-server-1",
         channel_id=2,
         thread_id=None,
         author_id=3,

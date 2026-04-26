@@ -12,6 +12,12 @@ from pixie_for_pm.domain.models import (
     IncomingDiscordMessage,
     WorkflowContext,
 )
+from pixie_for_pm.integrations.toolset import (
+    AgentToolset,
+    ConnectedIntegration,
+    DiscordTriggerContext,
+    ToolsetInitializer,
+)
 from pixie_for_pm.orchestration.runtime import PixieOrchestrator
 
 
@@ -44,6 +50,33 @@ async def _market_placeholder(context: WorkflowContext) -> AgentExecution:
     )
 
 
+class _StaticToolsetInitializer(ToolsetInitializer):
+    def __init__(self, toolset: AgentToolset) -> None:
+        self.toolset = toolset
+        self.calls: list[DiscordTriggerContext] = []
+
+    async def initialize(self, trigger: DiscordTriggerContext) -> AgentToolset:
+        self.calls.append(trigger)
+        return self.toolset
+
+
+async def _assert_tool_context(context: WorkflowContext) -> AgentExecution:
+    assert context.trigger.discord_server_id == "discord-server-789"
+    assert context.trigger.discord_user_id == "31"
+    assert [
+        integration.provider_id for integration in context.toolset.integrations
+    ] == ["notion"]
+    assert context.toolset.as_langgraph_tools() == context.toolset.tools
+    return AgentExecution(
+        messages=[
+            AgentMessage(
+                agent=AgentRole.PRODUCT_MANAGER,
+                content="Tool-aware placeholder response",
+            )
+        ]
+    )
+
+
 @pytest.mark.asyncio
 async def test_orchestrator_runs_placeholder_agent_and_persists_sqlite_checkpoint(
     tmp_path: Path,
@@ -51,6 +84,7 @@ async def test_orchestrator_runs_placeholder_agent_and_persists_sqlite_checkpoin
     request = build_dispatch_request(
         IncomingDiscordMessage(
             discord_message_id=10,
+            discord_server_id="discord-server-123",
             channel_id=20,
             thread_id="discord-thread-123",
             author_id=30,
@@ -83,6 +117,7 @@ async def test_orchestrator_keeps_handoffs_out_of_the_public_transcript(
     request = build_dispatch_request(
         IncomingDiscordMessage(
             discord_message_id=11,
+            discord_server_id="discord-server-456",
             channel_id=21,
             thread_id="discord-thread-456",
             author_id=31,
@@ -105,3 +140,50 @@ async def test_orchestrator_keeps_handoffs_out_of_the_public_transcript(
     assert all(
         "handoff" not in message.content.lower() for message in result.transcript
     )
+
+
+@pytest.mark.asyncio
+async def test_orchestrator_initializes_request_scoped_toolset_for_agent_context(
+    tmp_path: Path,
+) -> None:
+    request = build_dispatch_request(
+        IncomingDiscordMessage(
+            discord_message_id=12,
+            discord_server_id="discord-server-789",
+            channel_id=22,
+            thread_id="discord-thread-789",
+            author_id=31,
+            content="Can you use our connected tools?",
+            directly_mentions_bot=True,
+            is_reply_to_bot=False,
+        )
+    )
+    initializer = _StaticToolsetInitializer(
+        AgentToolset(
+            tools=(),
+            integrations=(
+                ConnectedIntegration(
+                    provider_id="notion",
+                    provider_name="Notion",
+                    auth_type="oauth2",
+                    status="active",
+                    scopes=("read_content",),
+                    tool_names=("notion_search", "notion_get_page"),
+                ),
+            ),
+        )
+    )
+
+    async with PixieOrchestrator(
+        checkpoint_path=tmp_path / "tool-context.sqlite",
+        agent_handlers={AgentRole.PRODUCT_MANAGER: _assert_tool_context},
+        toolset_initializer=initializer,
+    ) as orchestrator:
+        result = await orchestrator.dispatch(request)
+
+    assert [message.content for message in result.transcript] == [
+        "Tool-aware placeholder response"
+    ]
+    assert [trigger.discord_server_id for trigger in initializer.calls] == [
+        "discord-server-789"
+    ]
