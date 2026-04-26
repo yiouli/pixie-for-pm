@@ -46,21 +46,29 @@ changelogs/
 
 The runtime flow is:
 
-1. Discord receives a message in the configured orchestration channel or one of its threads.
+1. Discord receives a message that explicitly addresses the bot through a bot mention, an agent-token mention, or a reply to a prior agent message.
 2. The Discord adapter normalizes message content into a typed dispatch request.
 3. Routing selects the mentioned agent, reply target, or the default product manager.
 4. LangGraph invokes the selected placeholder agent and persists checkpoint state to SQLite.
 5. If an agent requests a handoff, the orchestration layer generates a synthetic handoff message and then routes control to the target agent.
 6. The Discord adapter publishes the current turn’s agent messages back to the thread using persona webhooks when configured, with a bot-message fallback when they are not.
 
+The Discord install flow is:
+
+1. A user opens `/` on the FastAPI-hosted web app.
+2. The install page links to `/api/discord/install`.
+3. FastAPI redirects the browser to Discord's callback-less bot authorization URL with `bot applications.commands` and the minimum permissions needed for the current e2e loop.
+4. The installer chooses the Discord server in Discord's own authorize UI.
+5. After authorization, the user runs `/settings` inside that server to enter the authenticated settings flow.
+
 The integration settings flow is:
 
-1. A Discord user runs `/settings` in the configured guild.
+1. A Discord user runs `/settings` in a guild where the bot is installed.
 2. The bot replies with an ephemeral link to `/settings?server_id=<guild-id>` on the FastAPI-hosted web app.
 3. FastAPI serves the built SPA from `web/dist`, and the browser loads the settings UI from the same origin as the API.
-4. The settings UI establishes a Discord-backed Supabase session and claims the Discord server for the current app user.
-5. The FastAPI server stores encrypted connection credentials per server and provider.
-6. Agent-side integrations fetch decrypted credentials through the internal API, keyed by Discord server ID and protected with `INTERNAL_API_KEY`.
+4. The settings UI establishes a Discord-backed session and claims the Discord server for the current app user.
+5. The FastAPI server stores encrypted connection credentials in the shared connection store.
+6. The bot and agent-side integrations read the same shared store, keyed by Discord server ID.
 
 ## Persistence
 
@@ -110,11 +118,22 @@ uv run pixie-web-server
 
 Open `http://localhost:8000`. FastAPI serves the latest files from `web/dist`, so refreshing the page picks up each watched rebuild. `npm run dev` is no longer the default local workflow for this repo.
 
+The root page at `http://localhost:8000/` is the install surface for the Discord bot. The installer now chooses the target server in Discord's authorize UI instead of Pixie preselecting one.
+
+The bot no longer relies on any configured Discord channel. It reacts only when explicitly addressed: a direct bot mention, an agent token mention such as `@pm`, or a reply to a previous agent message.
+
 Create `web/.env` from `web/.env.example`. Leave `VITE_API_URL` empty to use the same origin as FastAPI, or set it explicitly only when the frontend should call a different API host.
 
 The bot entrypoint expects a populated `.env` file or equivalent environment variables. The current agent handlers are intentionally placeholder implementations and should be replaced with real prompts, tool calls, and handoff logic as the project grows.
 
-The settings API expects session and encryption keys plus OAuth client credentials. Supabase remains optional as a persisted connection store, and the current test suite exercises the API against an injected in-memory store so route behavior stays deterministic during local development.
+The settings API expects session and encryption keys plus OAuth client credentials. Supabase remains optional; when it is not configured, both the web app and bot default to the shared local SQLite store at `CONNECTION_STORE_SQLITE_PATH` so local end-to-end flows work across separate processes.
+
+To validate the browser-visible install flow locally, run:
+
+```bash
+cd web
+npm run test:e2e -- tests/e2e/install.spec.ts
+```
 
 For a full manual Discord verification flow, including Discord app setup, bot invite, channel configuration, and message-by-message e2e checks, see [docs/discord-e2e.md](/home/yiouli/repo/pixie-for-pm/docs/discord-e2e.md).
 
@@ -122,8 +141,8 @@ For a full manual Discord verification flow, including Discord app setup, bot in
 
 This scaffold now covers the first integration-management slice:
 
-- Discord transport handles message routing plus a guild-scoped `/settings` command.
-- FastAPI exposes settings, claim, connection, OAuth callback, and internal credential routes.
+- Discord transport handles message routing for explicit mentions, replies to agent messages, and the `/settings` slash command.
+- FastAPI exposes the bot install page/redirect, settings, claim, connection, OAuth callback, and internal credential routes.
 - Credentials are encrypted before storage and decrypted only on the internal server-to-server path.
 - The web frontend provides the initial settings UX for OAuth and API-key providers.
 - Agent handlers still use placeholder business logic, and live storage/provider wiring should be verified in deployment.

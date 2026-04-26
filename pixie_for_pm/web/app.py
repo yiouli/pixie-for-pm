@@ -11,12 +11,16 @@ Architecture
 The web server exposes a settings API for Discord server owners to connect
 external tools (Notion, GitHub, PostHog, etc.) to their server.  It is a
 Python process that runs **alongside** the Discord bot process.  Both processes
-can share the same :class:`~pixie_for_pm.web.store.ConnectionStore` instance
-(Supabase or in-memory) and :class:`~pixie_for_pm.web.encryption.CredentialCipher`
+can share the same :class:`~pixie_for_pm.web.store.ConnectionStore` backend
+(Supabase or local SQLite) and :class:`~pixie_for_pm.web.encryption.CredentialCipher`
 directly in Python code — no HTTP bridge is needed.
 
 Authentication
 --------------
+The public install surface starts at ``GET /`` and sends users to
+``GET /api/discord/install``, which builds Discord's callback-less bot install
+URL using the configured application ID, guild hint, and permission set.
+
 Users log in via Discord OAuth 2.0 (``GET /api/auth/discord`` →
 ``GET /api/auth/discord/callback``).  On success the server sets a signed
 Fernet-encrypted ``session`` HttpOnly cookie.  All protected routes read this
@@ -34,6 +38,13 @@ Required environment variables
 -------------------------------
 - ``CREDENTIALS_ENCRYPTION_KEY`` — Fernet key for credential storage.
 - ``SESSION_SECRET_KEY`` — Fernet key for session cookies.
+- ``DISCORD_APPLICATION_ID`` — Discord application ID used for the bot install
+    URL. Falls back to ``DISCORD_OAUTH_CLIENT_ID`` when both flows use the same
+    app.
+- ``DISCORD_INSTALL_PERMISSIONS`` — optional override for the callback-less
+    Discord bot install URL permissions integer.
+- ``CONNECTION_STORE_SQLITE_PATH`` — local SQLite file used when Supabase is
+    not configured. This is the default shared store for local web+bot runs.
 - ``DISCORD_OAUTH_CLIENT_ID`` / ``DISCORD_OAUTH_CLIENT_SECRET`` — Discord app
   credentials for the login OAuth flow.
 - ``DISCORD_OAUTH_CALLBACK_URL`` — public URL of ``/api/auth/discord/callback``.
@@ -42,7 +53,7 @@ Required environment variables
 - ``WEB_APP_URL`` — public URL of the settings web app (used for CORS, the
     Discord `/settings` link, and post-login redirects).
 - ``SUPABASE_URL`` / ``SUPABASE_SERVICE_ROLE_KEY`` — optional; enables the
-  Supabase-backed connection store.  Falls back to in-memory when absent.
+    Supabase-backed connection store.  Falls back to local SQLite when absent.
 """
 
 from __future__ import annotations
@@ -66,9 +77,10 @@ from pixie_for_pm.web.providers.discord_login import (
 from pixie_for_pm.web.providers.oauth import HttpOAuthService
 from pixie_for_pm.web.routes.auth_routes import router as auth_router
 from pixie_for_pm.web.routes.connection_routes import router as connection_router
+from pixie_for_pm.web.routes.install_routes import router as install_router
 from pixie_for_pm.web.routes.server_routes import router as server_router
 from pixie_for_pm.web.session import SessionCodec
-from pixie_for_pm.web.store import InMemoryConnectionStore, SupabaseConnectionStore
+from pixie_for_pm.web.store import build_connection_store
 
 if TYPE_CHECKING:
     from pixie_for_pm.web.providers.api_key import ApiKeyValidator
@@ -113,8 +125,8 @@ def create_app(
         settings: Loaded application settings.
         store: Connection store override.  Defaults to
             :class:`~pixie_for_pm.web.store.SupabaseConnectionStore` when
-            ``SUPABASE_URL`` and ``SUPABASE_SERVICE_ROLE_KEY`` are set, or
-            :class:`~pixie_for_pm.web.store.InMemoryConnectionStore` otherwise.
+            ``SUPABASE_URL`` and ``SUPABASE_SERVICE_ROLE_KEY`` are set, or a
+            shared local SQLite store otherwise.
         discord_login_service: Discord OAuth login service override.  Defaults
             to :class:`~pixie_for_pm.web.providers.discord_login.HttpDiscordLoginService`
             when Discord OAuth credentials are configured.
@@ -131,13 +143,8 @@ def create_app(
     runtime_store: ConnectionStore
     if store is not None:
         runtime_store = store
-    elif settings.supabase_url and settings.supabase_service_role_key:
-        runtime_store = SupabaseConnectionStore(
-            settings.supabase_url,
-            settings.supabase_service_role_key,
-        )
     else:
-        runtime_store = InMemoryConnectionStore()
+        runtime_store = build_connection_store(settings)
 
     runtime_discord_login: DiscordLoginService
     if discord_login_service is not None:
@@ -180,6 +187,7 @@ def create_app(
         return {"status": "ok"}
 
     app.include_router(auth_router)
+    app.include_router(install_router)
     app.include_router(server_router)
     app.include_router(connection_router)
 

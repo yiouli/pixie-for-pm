@@ -15,6 +15,21 @@ from pixie_for_pm.domain.models import AgentMessage, IncomingDiscordMessage
 from pixie_for_pm.orchestration.runtime import PixieOrchestrator
 
 
+def should_dispatch_message(
+    message: IncomingDiscordMessage,
+    *,
+    bot_user_id: int | None,
+) -> bool:
+    if message.mentioned_agents:
+        return True
+    if message.reply_to_agent is not None:
+        return True
+    if bot_user_id is None:
+        return False
+    direct_mentions = (f"<@{bot_user_id}>", f"<@!{bot_user_id}>")
+    return any(token in message.content for token in direct_mentions)
+
+
 class PixieDiscordBot(discord.Client):
     def __init__(self, settings: AppSettings) -> None:
         intents = discord.Intents.default()
@@ -25,11 +40,24 @@ class PixieDiscordBot(discord.Client):
         self._webhook_session: aiohttp.ClientSession | None = None
         self.tree = app_commands.CommandTree(self)
         install_settings_command(self.tree, settings)
+        self._ready_guild_sync_complete = False
 
     async def setup_hook(self) -> None:
         self._webhook_session = aiohttp.ClientSession()
         await self._orchestrator.__aenter__()
-        await self.tree.sync(guild=discord.Object(id=self._settings.discord_guild_id))
+        await self.tree.sync()
+
+    async def on_ready(self) -> None:
+        if self._ready_guild_sync_complete:
+            return
+        self._ready_guild_sync_complete = True
+        for guild in self.guilds:
+            self.tree.copy_global_to(guild=guild)
+            await self.tree.sync(guild=guild)
+
+    async def on_guild_join(self, guild: discord.Guild) -> None:
+        self.tree.copy_global_to(guild=guild)
+        await self.tree.sync(guild=guild)
 
     async def close(self) -> None:
         await self._orchestrator.__aexit__(None, None, None)
@@ -41,13 +69,16 @@ class PixieDiscordBot(discord.Client):
         if message.author.bot or message.webhook_id is not None:
             return
 
-        if message.guild is None or message.guild.id != self._settings.discord_guild_id:
-            return
-
-        if not self._is_supported_channel(message.channel):
+        if message.guild is None:
             return
 
         incoming_message = self._normalize_message(message)
+        if not should_dispatch_message(
+            incoming_message,
+            bot_user_id=self.user.id if self.user is not None else None,
+        ):
+            return
+
         dispatch_request = build_dispatch_request(incoming_message)
         result = await self._orchestrator.dispatch(dispatch_request)
         for agent_message in result.transcript:
@@ -80,15 +111,6 @@ class PixieDiscordBot(discord.Client):
 
         author = reference.resolved.author
         return getattr(author, "display_name", author.name)
-
-    def _is_supported_channel(self, channel: object) -> bool:
-        if isinstance(channel, discord.Thread):
-            thread = channel
-            return thread.parent_id == self._settings.discord_orchestration_channel_id
-        return (
-            getattr(channel, "id", None)
-            == self._settings.discord_orchestration_channel_id
-        )
 
     async def _publish_agent_message(
         self,

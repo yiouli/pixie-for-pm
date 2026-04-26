@@ -131,9 +131,11 @@ async def discord_login(
 
 @router.get("/discord/callback")
 async def discord_callback(
-    code: str,
-    state: str,
     services: ServicesDep,
+    code: str | None = None,
+    state: str | None = None,
+    error: str | None = None,
+    error_description: str | None = None,
     discord_state: Annotated[str | None, Cookie(alias=_STATE_COOKIE)] = None,
     next_path: Annotated[str | None, Cookie(alias=_NEXT_COOKIE)] = None,
 ) -> RedirectResponse:
@@ -143,6 +145,16 @@ async def discord_callback(
     access token, fetches the Discord user's identity, and issues a ``session``
     cookie.  The browser is then redirected to ``WEB_APP_URL``.
     """
+    if error is not None:
+        detail = f"Discord OAuth failed: {error}"
+        if error_description:
+            detail = f"{detail} ({error_description})"
+        raise HTTPException(status_code=400, detail=detail)
+    if code is None or state is None:
+        raise HTTPException(
+            status_code=400,
+            detail="Discord OAuth callback is missing code or state.",
+        )
     if discord_state is None or not _states_match(state, discord_state):
         raise HTTPException(status_code=400, detail="Invalid OAuth state")
     if services.settings.discord_oauth_callback_url is None:

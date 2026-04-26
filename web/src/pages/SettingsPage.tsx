@@ -94,21 +94,10 @@ export function SettingsPage() {
       setViewerName(profileName);
 
       try {
-        let serverResponse: ServerSummary;
-        try {
-          serverResponse = await apiFetch<ServerSummary>(
-            `/api/servers/${serverId}`,
-          );
-        } catch (caughtError) {
-          if (caughtError instanceof ApiError && caughtError.status === 404) {
-            serverResponse = await apiFetch<ServerSummary>(
-              `/api/servers/${serverId}/claim`,
-              { method: "POST" },
-            );
-          } else {
-            throw caughtError;
-          }
-        }
+        const serverResponse = await apiFetch<ServerSummary>(
+          `/api/servers/${serverId}/claim`,
+          { method: "POST" },
+        );
 
         if (!serverResponse.owned_by_current_user) {
           throw new Error(

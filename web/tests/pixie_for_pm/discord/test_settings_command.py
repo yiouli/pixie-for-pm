@@ -8,8 +8,6 @@ def test_build_settings_url_includes_guild_id_query_parameter() -> None:
     settings = load_settings(
         {
             "DISCORD_BOT_TOKEN": "discord-token",
-            "DISCORD_GUILD_ID": "123",
-            "DISCORD_ORCHESTRATION_CHANNEL_ID": "456",
             "WEB_APP_URL": "https://app.pixie.test",
         }
     )
@@ -23,8 +21,6 @@ def test_build_settings_url_requires_web_app_configuration() -> None:
     settings = load_settings(
         {
             "DISCORD_BOT_TOKEN": "discord-token",
-            "DISCORD_GUILD_ID": "123",
-            "DISCORD_ORCHESTRATION_CHANNEL_ID": "456",
         }
     )
 

@@ -7,7 +7,7 @@ This guide walks through a full manual end-to-end test from Discord into the bot
 The e2e flow verifies all of the following in one pass:
 
 - the Discord bot can connect to your server
-- the configured channel filter works
+- explicit mention and reply triggers work
 - message normalization and routing work
 - LangGraph runs the selected placeholder agent
 - SQLite checkpoint persistence is created locally
@@ -40,19 +40,33 @@ In the Discord Developer Portal:
 4. Enable `Message Content Intent`.
 5. Copy the bot token.
 
-## 3. Invite the Bot to Your Server
+## 3. Install the Bot Through the Pixie Web App
 
-In the Discord Developer Portal:
+Build the frontend once and start the web server:
 
-1. Open `OAuth2` -> `URL Generator`.
-2. Select the `bot` scope.
-3. Select at least these permissions:
-   - `View Channels`
-   - `Send Messages`
-   - `Create Public Threads`
-   - `Send Messages in Threads`
-   - `Read Message History`
-4. Open the generated URL and invite the bot to your target server.
+```bash
+cd web
+npm install
+npm run build
+cd ..
+uv run pixie-web-server
+```
+
+Then, in a browser:
+
+1. Open `http://localhost:8000/`.
+2. Click `Install Pixie to Discord`.
+3. Confirm Discord opens the authorize screen for your application.
+4. Choose the target server in Discord and authorize the install there.
+
+The install route is callback-less by design. After Discord confirms the install, return to your server and use `/settings` there.
+
+For automated browser verification of the install surface, run:
+
+```bash
+cd web
+npm run test:e2e -- tests/e2e/install.spec.ts
+```
 
 ## 4. Create a Test Channel in Discord
 
@@ -67,7 +81,6 @@ You only need one channel for the basic e2e flow. Webhooks are optional for the 
 In Discord, enable Developer Mode and then collect:
 
 1. the server ID
-2. the orchestration channel ID
 
 ## 6. Configure `.env`
 
@@ -81,10 +94,12 @@ Set at least these values:
 
 ```dotenv
 DISCORD_BOT_TOKEN=your-bot-token
-DISCORD_GUILD_ID=your-server-id
-DISCORD_ORCHESTRATION_CHANNEL_ID=your-channel-id
+CONNECTION_STORE_SQLITE_PATH=.state/pixie-connection-store.sqlite
 LANGGRAPH_CHECKPOINT_PATH=.state/pixie-langgraph.sqlite
 ```
+
+For local runs without Supabase, `CONNECTION_STORE_SQLITE_PATH` is how the web app and the bot share per-server channel configuration and credentials across separate processes.
+For local runs without Supabase, `CONNECTION_STORE_SQLITE_PATH` is how the web app and the bot share claimed servers and credentials across separate processes.
 
 The default mention tokens in `.env.example` are already enough for a first e2e run:
 
@@ -106,16 +121,27 @@ uv run pixie-discord-bot
 
 Keep that terminal open while testing in Discord.
 
-## 8. Run the Basic E2E Checks in Discord
+## 8. Claim the Server Through `/settings`
 
-Open the configured Discord channel and send the following messages.
+In any channel in the Discord server:
 
-### Check A: Default Routing to Product Manager
+1. Run `/settings`.
+2. Click the settings link.
+3. Finish Discord login if prompted.
+4. Confirm the settings page shows the same server ID.
+
+This step claims the server for your account so settings and provider credentials can be attached to that Discord server.
+
+## 9. Run the Basic E2E Checks in Discord
+
+Open any channel in the installed Discord server and send the following messages.
+
+### Check A: Direct Bot Mention Routes to Product Manager
 
 Send:
 
 ```text
-Can you help me test the Pixie bot?
+@Pixie can you help me test the bot?
 ```
 
 Expected result:
@@ -163,20 +189,21 @@ Expected result:
 - the response starts with `E2E_PLACEHOLDER_OK`
 - the response comes from the same agent persona path that produced the message you replied to
 
-## 9. Verify Local Persistence
+## 10. Verify Local Persistence
 
-After sending at least one Discord message, confirm the SQLite checkpoint file exists:
+After sending at least one Discord message, confirm the SQLite files exist:
 
 ```bash
 ls -l .state/pixie-langgraph.sqlite
+ls -l .state/pixie-connection-store.sqlite
 ```
 
 Expected result:
 
-- the file exists
-- the file timestamp updates as you continue sending messages
+- both files exist
+- the checkpoint file timestamp updates as you continue sending messages
 
-## 10. Optional Persona Webhook Check
+## 11. Optional Persona Webhook Check
 
 If you want each agent to appear with a separate Discord name and avatar:
 
@@ -193,9 +220,10 @@ Expected result:
 
 If the bot does not respond:
 
-- verify `DISCORD_GUILD_ID` and `DISCORD_ORCHESTRATION_CHANNEL_ID`
-- verify the bot was invited to the correct server
+- verify the install flow completed and the bot appears in the server member list
+- verify the bot and web server are using the same `CONNECTION_STORE_SQLITE_PATH` when Supabase is not configured
 - verify `Message Content Intent` is enabled
+- verify you explicitly mentioned the bot or an agent token such as `@pm`
 - verify the bot can read and send messages in the test channel
 - verify you started the bot from the repository root with `uv run pixie-discord-bot`
 
@@ -215,9 +243,10 @@ If persistence is not created:
 For a quick smoke test, use this order:
 
 1. start the bot
-2. send one plain message and confirm the product manager response
-3. send `@market please verify the routing`
-4. open a thread and reply inside it
-5. verify `.state/pixie-langgraph.sqlite` exists
+2. run `/settings` once and open the settings page
+3. send one bot mention and confirm the product manager response
+4. send `@market please verify the routing`
+5. open a thread and reply inside it
+6. verify both SQLite files exist
 
-If all five checks pass, the Discord-to-LangGraph-to-Discord loop is working.
+If all six checks pass, the Discord-to-LangGraph-to-Discord loop is working.

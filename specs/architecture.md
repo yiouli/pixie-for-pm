@@ -14,7 +14,7 @@ The first surface is the existing Discord orchestration loop. The second surface
 
 ## Primary Flow
 
-1. A user sends a message in the configured orchestration channel or one of its threads.
+1. A user explicitly addresses the bot in a guild message by mentioning the bot account, mentioning an agent token such as `@pm`, or replying to a prior agent message.
 2. The Discord adapter normalizes the incoming message into a typed `IncomingDiscordMessage`.
 3. Routing chooses an `AgentRole` using this precedence:
    - first explicit persona mention token
@@ -26,9 +26,21 @@ The first surface is the existing Discord orchestration loop. The second surface
 7. If the execution returns handoffs, the graph emits a synthetic handoff message and routes to the next agent.
 8. The current turn’s messages are returned to the Discord transport for publication.
 
+## Settings Flow
+
+## Discord Install Flow
+
+1. A user opens `/` on the FastAPI web app.
+2. The install page sends the browser to `GET /api/discord/install`.
+3. FastAPI builds Discord's callback-less bot authorization URL with `bot applications.commands` and `DISCORD_INSTALL_PERMISSIONS`.
+4. The user chooses a guild in Discord and authorizes the install.
+5. The user returns to Discord and runs `/settings` in that same guild.
+
+The scaffold is no longer single-guild at the install or `/settings` level. The bot runtime no longer depends on a configured Discord channel and only reacts when explicitly addressed.
+
 ## Integration Settings Flow
 
-1. A user runs `/settings` in the configured guild.
+1. A user runs `/settings` in a guild where the bot is installed.
 2. The bot replies with an ephemeral link to the web app, preserving the Discord server ID.
 3. FastAPI serves the built SPA bundle for that link, and the browser loads the settings UI from the same origin as the API.
 4. The user opens the link and, if not already logged in, is redirected to Discord OAuth
@@ -39,8 +51,7 @@ The first surface is the existing Discord orchestration loop. The second surface
 6. The browser is redirected back to the web app with the session cookie set.
 7. The web app calls `POST /api/servers/{discord_server_id}/claim` to record ownership.
 8. The FastAPI API validates ownership on every subsequent settings mutation.
-9. OAuth and API-key provider credentials are stored as Fernet-encrypted per-server
-   connection records in the connection store (Supabase in production, in-memory in tests).
+9. OAuth and API-key provider credentials are stored as per-server connection records in the connection store (Supabase in production, local SQLite in local runs).
 10. The Discord bot's agent runtime accesses decrypted credentials **directly in Python**
     via `pixie_for_pm.integrations.credentials.get_credentials(discord_server_id, provider,
 store=store, cipher=cipher)` — no HTTP bridge is needed.

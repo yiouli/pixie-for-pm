@@ -1,11 +1,16 @@
 from __future__ import annotations
 
+import sqlite3
 from collections.abc import Callable
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime
+from pathlib import Path
 from typing import Protocol, cast
+from uuid import uuid4
 
 from supabase import Client, create_client
+
+from pixie_for_pm.config.settings import AppSettings
 
 
 @dataclass(frozen=True)
@@ -101,7 +106,11 @@ class InMemoryConnectionStore(ConnectionStore):
         if existing is not None:
             if existing.owner_user_id != owner_user_id:
                 raise ServerOwnershipConflictError(discord_server_id)
-            return existing, False
+            updated = replace(
+                existing, name=name if name is not None else existing.name
+            )
+            self._servers_by_discord_id[discord_server_id] = updated
+            return updated, False
 
         self._server_sequence += 1
         created = ServerRecord(
@@ -194,6 +203,195 @@ class InMemoryConnectionStore(ConnectionStore):
         self._connections_by_key[key] = replace(existing, last_used_at=self._now())
 
 
+class SQLiteConnectionStore(ConnectionStore):
+    def __init__(self, database_path: Path) -> None:
+        self._database_path = Path(database_path)
+        self._database_path.parent.mkdir(parents=True, exist_ok=True)
+        self._initialize()
+
+    def _connect(self) -> sqlite3.Connection:
+        connection = sqlite3.connect(self._database_path)
+        connection.row_factory = sqlite3.Row
+        return connection
+
+    def _initialize(self) -> None:
+        with self._connect() as connection:
+            connection.executescript(
+                """
+                create table if not exists servers (
+                  id text primary key,
+                  discord_server_id text not null unique,
+                  owner_user_id text not null,
+                  name text,
+                  created_at text not null
+                );
+
+                create table if not exists connections (
+                  id text primary key,
+                  server_id text not null,
+                  provider text not null,
+                  credentials_encrypted text not null,
+                  scopes text,
+                  status text not null,
+                  connected_at text not null,
+                  last_used_at text,
+                  unique(server_id, provider)
+                );
+                """
+            )
+
+    async def get_server_by_discord_id(
+        self, discord_server_id: str
+    ) -> ServerRecord | None:
+        with self._connect() as connection:
+            row = connection.execute(
+                "select * from servers where discord_server_id = ? limit 1",
+                (discord_server_id,),
+            ).fetchone()
+        if row is None:
+            return None
+        return _server_from_row(dict(row))
+
+    async def claim_server(
+        self,
+        discord_server_id: str,
+        owner_user_id: str,
+        name: str | None = None,
+    ) -> tuple[ServerRecord, bool]:
+        existing = await self.get_server_by_discord_id(discord_server_id)
+        if existing is not None:
+            if existing.owner_user_id != owner_user_id:
+                raise ServerOwnershipConflictError(discord_server_id)
+            if name is not None and name != existing.name:
+                with self._connect() as connection:
+                    connection.execute(
+                        "update servers set name = ? where discord_server_id = ?",
+                        (name, discord_server_id),
+                    )
+                updated = await self.get_server_by_discord_id(discord_server_id)
+                if updated is None:
+                    raise RuntimeError("SQLite store lost the claimed server row.")
+                return updated, False
+            return existing, False
+
+        created_at = datetime.now(tz=UTC).isoformat()
+        server_id = str(uuid4())
+        with self._connect() as connection:
+            connection.execute(
+                """
+                insert into servers (
+                                    id, discord_server_id, owner_user_id, name, created_at
+                                ) values (?, ?, ?, ?, ?)
+                """,
+                (
+                    server_id,
+                    discord_server_id,
+                    owner_user_id,
+                    name,
+                    created_at,
+                ),
+            )
+        created = await self.get_server_by_discord_id(discord_server_id)
+        if created is None:
+            raise RuntimeError("SQLite store did not return the claimed server row.")
+        return created, True
+
+    async def list_servers_for_owner(self, owner_user_id: str) -> list[ServerRecord]:
+        with self._connect() as connection:
+            rows = connection.execute(
+                "select * from servers where owner_user_id = ? order by discord_server_id",
+                (owner_user_id,),
+            ).fetchall()
+        return [_server_from_row(dict(row)) for row in rows]
+
+    async def get_connection(
+        self, server_id: str, provider: str
+    ) -> ConnectionRecord | None:
+        with self._connect() as connection:
+            row = connection.execute(
+                "select * from connections where server_id = ? and provider = ? limit 1",
+                (server_id, provider),
+            ).fetchone()
+        if row is None:
+            return None
+        return _connection_from_row(dict(row))
+
+    async def get_connection_by_discord_server(
+        self, discord_server_id: str, provider: str
+    ) -> ConnectionRecord | None:
+        server = await self.get_server_by_discord_id(discord_server_id)
+        if server is None:
+            return None
+        return await self.get_connection(server.id, provider)
+
+    async def list_connections(self, server_id: str) -> list[ConnectionRecord]:
+        with self._connect() as connection:
+            rows = connection.execute(
+                "select * from connections where server_id = ? order by provider",
+                (server_id,),
+            ).fetchall()
+        return [_connection_from_row(dict(row)) for row in rows]
+
+    async def upsert_connection(
+        self,
+        server_id: str,
+        provider: str,
+        credentials_encrypted: str,
+        scopes: list[str] | None,
+        status: str,
+    ) -> ConnectionRecord:
+        connection_id = str(uuid4())
+        now = datetime.now(tz=UTC).isoformat()
+        scopes_value = " ".join(scopes) if scopes is not None else None
+        with self._connect() as connection:
+            connection.execute(
+                """
+                insert into connections (
+                  id, server_id, provider, credentials_encrypted,
+                  scopes, status, connected_at, last_used_at
+                ) values (?, ?, ?, ?, ?, ?, ?, null)
+                on conflict(server_id, provider)
+                do update set
+                  credentials_encrypted = excluded.credentials_encrypted,
+                  scopes = excluded.scopes,
+                  status = excluded.status,
+                  connected_at = excluded.connected_at
+                """,
+                (
+                    connection_id,
+                    server_id,
+                    provider,
+                    credentials_encrypted,
+                    scopes_value,
+                    status,
+                    now,
+                ),
+            )
+        updated = await self.get_connection(server_id, provider)
+        if updated is None:
+            raise RuntimeError("SQLite store did not return the connection row.")
+        return updated
+
+    async def delete_connection(self, server_id: str, provider: str) -> bool:
+        with self._connect() as connection:
+            cursor = connection.execute(
+                "delete from connections where server_id = ? and provider = ?",
+                (server_id, provider),
+            )
+            return cursor.rowcount > 0
+
+    async def touch_connection_last_used(self, server_id: str, provider: str) -> None:
+        with self._connect() as connection:
+            connection.execute(
+                """
+                update connections
+                set last_used_at = ?
+                where server_id = ? and provider = ?
+                """,
+                (datetime.now(tz=UTC).isoformat(), server_id, provider),
+            )
+
+
 class SupabaseConnectionStore(ConnectionStore):
     def __init__(self, supabase_url: str, service_role_key: str) -> None:
         self._client: Client = create_client(supabase_url, service_role_key)
@@ -223,6 +421,21 @@ class SupabaseConnectionStore(ConnectionStore):
         if existing is not None:
             if existing.owner_user_id != owner_user_id:
                 raise ServerOwnershipConflictError(discord_server_id)
+            next_name = name if name is not None else existing.name
+            if next_name != existing.name:
+                response = (
+                    self._client.table("servers")
+                    .update({"name": next_name})
+                    .eq("id", existing.id)
+                    .execute()
+                )
+                rows = _response_rows(response)
+                if rows:
+                    return _server_from_row(rows[0]), False
+                refreshed = await self.get_server_by_discord_id(discord_server_id)
+                if refreshed is None:
+                    raise RuntimeError("Supabase lost the claimed server row.")
+                return refreshed, False
             return existing, False
 
         response = (
@@ -355,6 +568,8 @@ def _connection_from_row(row: dict[str, object]) -> ConnectionRecord:
     scopes: list[str] | None = None
     if isinstance(scopes_value, list):
         scopes = [str(value) for value in scopes_value]
+    elif isinstance(scopes_value, str) and scopes_value != "":
+        scopes = [scope for scope in scopes_value.split(" ") if scope]
 
     last_used_value = row.get("last_used_at")
     last_used_at = (
@@ -383,3 +598,12 @@ def _parse_datetime(value: object) -> datetime:
     if value is None:
         raise ValueError("Expected a timestamp value from Supabase.")
     return datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+
+
+def build_connection_store(settings: AppSettings) -> ConnectionStore:
+    if settings.supabase_url and settings.supabase_service_role_key:
+        return SupabaseConnectionStore(
+            settings.supabase_url,
+            settings.supabase_service_role_key,
+        )
+    return SQLiteConnectionStore(settings.connection_store_sqlite_path)

@@ -5,6 +5,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Final
 
+from pixie_for_pm.discord.install import default_install_permissions
 from pixie_for_pm.domain.models import AgentRole
 
 
@@ -18,8 +19,10 @@ class AgentPersonaConfig:
 @dataclass(frozen=True)
 class AppSettings:
     discord_bot_token: str
-    discord_guild_id: int
-    discord_orchestration_channel_id: int
+    discord_application_id: str | None
+    discord_guild_id: int | None
+    discord_install_permissions: int
+    connection_store_sqlite_path: Path
     langgraph_checkpoint_path: Path
     web_app_url: str | None
     # Discord OAuth login (used by the settings web app's login flow)
@@ -108,6 +111,13 @@ def _optional(env: dict[str, str], key: str) -> str | None:
     return stripped or None
 
 
+def _optional_int(env: dict[str, str], key: str) -> int | None:
+    value = _optional(env, key)
+    if value is None:
+        return None
+    return int(value)
+
+
 def _load_oauth_values(env: dict[str, str], suffix: str) -> dict[str, str]:
     providers = ("NOTION", "GITHUB", "VERCEL", "AIRTABLE")
     values: dict[str, str] = {}
@@ -142,9 +152,19 @@ def load_settings(env: dict[str, str] | None = None) -> AppSettings:
     personas = {role: _load_persona(source_env, role) for role in AgentRole}
     return AppSettings(
         discord_bot_token=_require(source_env, "DISCORD_BOT_TOKEN"),
-        discord_guild_id=int(_require(source_env, "DISCORD_GUILD_ID")),
-        discord_orchestration_channel_id=int(
-            _require(source_env, "DISCORD_ORCHESTRATION_CHANNEL_ID")
+        discord_application_id=(
+            _optional(source_env, "DISCORD_APPLICATION_ID")
+            or _optional(source_env, "DISCORD_OAUTH_CLIENT_ID")
+        ),
+        discord_guild_id=_optional_int(source_env, "DISCORD_GUILD_ID"),
+        discord_install_permissions=(
+            _optional_int(source_env, "DISCORD_INSTALL_PERMISSIONS")
+            or default_install_permissions()
+        ),
+        connection_store_sqlite_path=Path(
+            source_env.get(
+                "CONNECTION_STORE_SQLITE_PATH", ".state/pixie-connection-store.sqlite"
+            )
         ),
         langgraph_checkpoint_path=Path(
             source_env.get("LANGGRAPH_CHECKPOINT_PATH", ".state/pixie-langgraph.sqlite")

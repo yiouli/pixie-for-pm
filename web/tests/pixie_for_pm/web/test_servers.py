@@ -16,8 +16,6 @@ _OTHER = AuthenticatedUser(
 def _settings() -> dict[str, str]:
     return {
         "DISCORD_BOT_TOKEN": "discord-token",
-        "DISCORD_GUILD_ID": "123",
-        "DISCORD_ORCHESTRATION_CHANNEL_ID": "456",
         "WEB_APP_URL": "https://app.pixie.test",
         "CREDENTIALS_ENCRYPTION_KEY": _FERNET_KEY,
         "SESSION_SECRET_KEY": _FERNET_KEY,

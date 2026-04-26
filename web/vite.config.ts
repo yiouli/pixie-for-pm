@@ -4,4 +4,8 @@ import { defineConfig } from "vite";
 
 export default defineConfig({
   plugins: [react(), tailwindcss()],
+  test: {
+    include: ["src/**/*.test.ts"],
+    exclude: ["tests/e2e/**"],
+  },
 });

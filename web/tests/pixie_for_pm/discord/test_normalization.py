@@ -11,7 +11,6 @@ def test_detect_mentioned_agents_uses_persona_tokens() -> None:
         {
             "DISCORD_BOT_TOKEN": "discord-token",
             "DISCORD_GUILD_ID": "123",
-            "DISCORD_ORCHESTRATION_CHANNEL_ID": "456",
             "DISCORD_PRODUCT_MANAGER_MENTION_TOKENS": "@pm",
             "DISCORD_USER_RESEARCHER_MENTION_TOKENS": "@uxr",
         }
@@ -32,7 +31,6 @@ def test_detect_reply_agent_matches_persona_display_name() -> None:
         {
             "DISCORD_BOT_TOKEN": "discord-token",
             "DISCORD_GUILD_ID": "123",
-            "DISCORD_ORCHESTRATION_CHANNEL_ID": "456",
             "DISCORD_PRODUCT_DESIGNER_DISPLAY_NAME": "Pixie Designer",
         }
     ).personas

@@ -6,7 +6,7 @@ from discord import app_commands
 from pixie_for_pm.config.settings import AppSettings
 
 
-def build_settings_url(settings: AppSettings, guild_id: int) -> str:
+def build_settings_url(settings: AppSettings, *, guild_id: int) -> str:
     if settings.web_app_url is None:
         raise RuntimeError("WEB_APP_URL must be configured to use /settings.")
     base_url = settings.web_app_url.rstrip("/")
@@ -17,12 +17,9 @@ def install_settings_command(
     tree: app_commands.CommandTree[discord.Client],
     settings: AppSettings,
 ) -> None:
-    guild = discord.Object(id=settings.discord_guild_id)
-
     @tree.command(
         name="settings",
         description="Configure integrations for the PM agents",
-        guild=guild,
     )
     async def settings_command(
         interaction: discord.Interaction[discord.Client],
@@ -35,7 +32,10 @@ def install_settings_command(
             return
 
         try:
-            url = build_settings_url(settings, guild_id=interaction.guild.id)
+            url = build_settings_url(
+                settings,
+                guild_id=interaction.guild.id,
+            )
         except RuntimeError as exc:
             await interaction.response.send_message(str(exc), ephemeral=True)
             return

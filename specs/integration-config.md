@@ -120,6 +120,23 @@ Migration file goes in `migrations/001_servers_and_connections.sql` (new directo
 
 ## 2. Auth System
 
+### 2.0 Discord Bot Installation
+
+Pixie's bot installation flow is intentionally separate from the Discord login callback. Discord's standard bot authorization flow is callback-less, so the web app exposes a simple install redirect rather than trying to reuse `/api/auth/discord/callback`.
+
+**Install flow:**
+
+1. Serve the root install page at `/`.
+2. Send the browser to `GET /api/discord/install`.
+3. Redirect to Discord with `scope=bot applications.commands`.
+4. Include the configured `DISCORD_INSTALL_PERMISSIONS` integer.
+5. Let the installer choose the target server in Discord's authorize UI.
+6. After authorization, instruct the user to run `/settings` in Discord to enter the authenticated settings flow.
+
+This separation is required because the login flow expects `code` and `state` for user auth, while the install flow just adds the bot/application commands to a guild.
+
+The per-server channel configuration now comes from `/settings`: the command captures the current Discord channel, the web flow persists it on the claimed server record, and the bot runtime only responds when a message belongs to that stored channel or one of its threads.
+
 ### 2.1 Discord OAuth via FastAPI Session Cookies
 
 The settings web app authenticates through FastAPI's Discord OAuth routes. Since the user is already logged into Discord in their browser, the OAuth flow usually auto-completes or requires a single "Authorize" click. FastAPI exchanges the callback code and issues an HttpOnly `session` cookie; the SPA never talks to Discord or Supabase auth directly and never stores browser auth tokens in localStorage.
@@ -129,7 +146,9 @@ The settings web app authenticates through FastAPI's Discord OAuth routes. Since
 1. Create an OAuth2 application at discord.com/developers/applications.
 2. Set the callback URI to `DISCORD_OAUTH_CALLBACK_URL`.
 3. Copy Client ID and Client Secret into the web server environment.
-4. Request scopes `identify` and `guilds` (`guilds` remains useful for future membership validation).
+4. Request only user-login scopes such as `identify`, `email`, and optionally `guilds`.
+
+`DISCORD_OAUTH_CALLBACK_URL` is reserved for the settings web app login flow. Bot install flows or any broader Discord application OAuth flow should not reuse `/api/auth/discord/callback`; those need a separate route/handler because they return different scopes, permissions, and callback semantics.
 
 **What we get from the Discord OAuth profile:**
 
@@ -158,16 +177,16 @@ Near-seamless because the user is already authenticated in Discord. On first use
 ```text
 1. User runs /settings in Discord
 2. Bot replies with ephemeral link button:
-   {WEB_APP_URL}/settings?server_id={interaction.guild.id}
+  {WEB_APP_URL}/settings?server_id={interaction.guild.id}
 3. User clicks → web UI /settings?server_id=123456
 4. FastAPI serves the built SPA from `web/dist`
 5. If no session cookie → SPA redirects to `/api/auth/discord?next=/settings?server_id=123456`
   → Discord auto-approves (user is already logged in)
   → FastAPI callback issues session cookie and redirects back to `/settings?server_id=123456`
 6. Server checks: does a servers row exist for this discord_server_id?
-   a. No  → create one with current user as owner → show settings
-   b. Yes, owned by current user → show settings
-   c. Yes, owned by someone else → show "not authorized" message
+  a. No  → create one with current user as owner → show settings
+  b. Yes, owned by current user → show settings
+  c. Yes, owned by someone else → show "not authorized" message
 ```
 
 ### Local Development Workflow
@@ -594,6 +613,8 @@ API_URL=                           # public URL of the FastAPI server
 WEB_APP_URL=                       # public URL of the React frontend
 OAUTH_CALLBACK_URL=                # {API_URL}/api/connections/oauth/callback
 INTERNAL_API_KEY=                   # server-to-server key, shared between bot and web server
+DISCORD_APPLICATION_ID=             # optional explicit application ID for /api/discord/install
+DISCORD_INSTALL_PERMISSIONS=        # optional permissions override for bot install URL
 ```
 
 ### Frontend `.env`

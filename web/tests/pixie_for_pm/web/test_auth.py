@@ -20,7 +20,6 @@ def _settings() -> dict[str, str]:
     return {
         "DISCORD_BOT_TOKEN": "discord-token",
         "DISCORD_GUILD_ID": "123",
-        "DISCORD_ORCHESTRATION_CHANNEL_ID": "456",
         "WEB_APP_URL": "https://app.pixie.test",
         "CREDENTIALS_ENCRYPTION_KEY": _FERNET_KEY,
         "SESSION_SECRET_KEY": _FERNET_KEY,
@@ -142,6 +141,30 @@ def test_discord_callback_rejects_mismatched_state() -> None:
     )
 
     assert response.status_code == 400
+
+
+def test_discord_callback_surfaces_discord_oauth_error_response() -> None:
+    app = create_app(
+        load_settings(_settings()),
+        store=InMemoryConnectionStore(),
+        discord_login_service=StaticDiscordLoginService(),
+    )
+
+    response = TestClient(app).get(
+        "/api/auth/discord/callback",
+        params={
+            "error": "invalid_scope",
+            "error_description": "The requested scope is invalid, unknown, or malformed.",
+        },
+    )
+
+    assert response.status_code == 400
+    assert response.json() == {
+        "detail": (
+            "Discord OAuth failed: invalid_scope "
+            "(The requested scope is invalid, unknown, or malformed.)"
+        )
+    }
 
 
 def test_logout_clears_session_cookie() -> None:

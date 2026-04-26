@@ -10,8 +10,6 @@ def test_load_settings_builds_personas_from_environment() -> None:
     settings = load_settings(
         {
             "DISCORD_BOT_TOKEN": "discord-token",
-            "DISCORD_GUILD_ID": "123",
-            "DISCORD_ORCHESTRATION_CHANNEL_ID": "456",
             "LANGGRAPH_CHECKPOINT_PATH": ".state/pixie.sqlite",
             "WEB_APP_URL": "https://app.pixie.test",
             "DISCORD_MARKET_ANALYST_MENTION_TOKENS": "@market-analyst,<@&42>",
@@ -19,8 +17,7 @@ def test_load_settings_builds_personas_from_environment() -> None:
         }
     )
 
-    assert settings.discord_guild_id == 123
-    assert settings.discord_orchestration_channel_id == 456
+    assert settings.discord_guild_id is None
     assert settings.langgraph_checkpoint_path == Path(".state/pixie.sqlite")
     assert settings.web_app_url == "https://app.pixie.test"
     assert settings.personas[AgentRole.MARKET_ANALYST].mention_tokens == (
@@ -37,8 +34,7 @@ def test_load_settings_supports_web_server_configuration() -> None:
     settings = load_settings(
         {
             "DISCORD_BOT_TOKEN": "discord-token",
-            "DISCORD_GUILD_ID": "123",
-            "DISCORD_ORCHESTRATION_CHANNEL_ID": "456",
+            "DISCORD_APPLICATION_ID": "discord-app-id",
             "WEB_APP_URL": "https://app.pixie.test",
             "DISCORD_OAUTH_CLIENT_ID": "discord-client-id",
             "DISCORD_OAUTH_CLIENT_SECRET": "discord-client-secret",
@@ -59,11 +55,13 @@ def test_load_settings_supports_web_server_configuration() -> None:
         }
     )
 
+    assert settings.discord_application_id == "discord-app-id"
     assert settings.discord_oauth_client_id == "discord-client-id"
     assert settings.discord_oauth_client_secret == "discord-client-secret"
     assert settings.discord_oauth_callback_url == (
         "https://api.pixie.test/api/auth/discord/callback"
     )
+    assert settings.discord_install_permissions == 309237713920
     assert settings.session_secret_key == "session-secret"
     assert settings.supabase_url == "https://supabase.pixie.test"
     assert settings.supabase_service_role_key == "service-role"
@@ -81,6 +79,29 @@ def test_load_settings_supports_web_server_configuration() -> None:
     assert settings.oauth_client_secrets["airtable"] == "airtable-secret"
 
 
+def test_load_settings_falls_back_to_discord_oauth_client_id_for_install_app_id() -> (
+    None
+):
+    settings = load_settings(
+        {
+            "DISCORD_BOT_TOKEN": "discord-token",
+            "DISCORD_OAUTH_CLIENT_ID": "discord-client-id",
+        }
+    )
+
+    assert settings.discord_application_id == "discord-client-id"
+
+
+def test_load_settings_does_not_require_a_discord_guild_id() -> None:
+    settings = load_settings(
+        {
+            "DISCORD_BOT_TOKEN": "discord-token",
+        }
+    )
+
+    assert settings.discord_guild_id is None
+
+
 def test_load_settings_prefers_local_dotenv_over_stale_shell_environment(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -90,8 +111,6 @@ def test_load_settings_prefers_local_dotenv_over_stale_shell_environment(
         "\n".join(
             [
                 "DISCORD_BOT_TOKEN=discord-token",
-                "DISCORD_GUILD_ID=123",
-                "DISCORD_ORCHESTRATION_CHANNEL_ID=456",
                 "WEB_APP_URL=http://localhost:8000",
                 "DISCORD_OAUTH_CALLBACK_URL=http://localhost:8000/api/auth/discord/callback",
             ]
