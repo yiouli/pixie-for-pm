@@ -56,8 +56,8 @@ export function InstallPage() {
                   3. Verify E2E
                 </div>
                 <p className="mt-3 text-sm leading-6 text-stone-700">
-                  Mention the bot or one of the agent tokens and confirm the bot
-                  replies with the{" "}
+                  Mention the bot or reply to one of its messages and confirm
+                  the bot replies with the{" "}
                   <span className="font-semibold">E2E_PLACEHOLDER_OK</span>{" "}
                   marker.
                 </p>
@@ -89,7 +89,7 @@ export function InstallPage() {
             </ul>
             <div className="mt-8 rounded-3xl border border-white/10 bg-white/6 p-5 text-sm leading-7 text-stone-300">
               Pixie keeps the Discord trigger surface narrow: direct bot
-              mention, agent-token mention, reply-to-agent, or slash command.
+              mention, reply-to-bot, or slash command.
               There is no channel-specific routing requirement.
             </div>
           </aside>

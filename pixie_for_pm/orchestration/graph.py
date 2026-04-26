@@ -152,19 +152,11 @@ def _dispatch_node(state: WorkflowState) -> dict[str, object]:
 
 async def _handoff_node(state: WorkflowState) -> dict[str, object]:
     next_handoff = state["pending_handoffs"][0]
-    source_agent = AgentRole(next_handoff["source_agent"])
     target_agent = AgentRole(next_handoff["target_agent"])
     remaining_handoffs = state["pending_handoffs"][1:]
-    handoff_message = AgentMessage(
-        agent=source_agent,
-        content=f"Handoff to {target_agent.label}: {next_handoff['reason']}",
-    )
-    serialized_message = _serialize_messages([handoff_message])
     return {
         "current_agent": target_agent.value,
         "pending_handoffs": remaining_handoffs,
-        "transcript": serialized_message,
-        "turn_transcript": state["turn_transcript"] + serialized_message,
     }
 
 

@@ -23,8 +23,8 @@ class IncomingDiscordMessage:
     thread_id: str | None
     author_id: int
     content: str
-    mentioned_agents: tuple[AgentRole, ...]
-    reply_to_agent: AgentRole | None
+    directly_mentions_bot: bool
+    is_reply_to_bot: bool
 
 
 @dataclass(frozen=True)

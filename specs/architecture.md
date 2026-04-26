@@ -2,7 +2,7 @@
 
 ## Goal
 
-The scaffold establishes two coordinated surfaces for a product collaboration system with five agent roles:
+The scaffold establishes two coordinated surfaces for a product collaboration system with five internal agent roles:
 
 - product manager
 - market analyst
@@ -10,23 +10,17 @@ The scaffold establishes two coordinated surfaces for a product collaboration sy
 - data scientist
 - product designer
 
-The first surface is the existing Discord orchestration loop. The second surface is a settings system that lets each Discord server owner connect external systems for the agents. The settings SPA is built by Vite into `web/dist` and then served by the FastAPI process.
+The first surface is a single public Discord bot. The second surface is a settings system that lets each Discord server owner connect external systems for the internal agents. The settings SPA is built by Vite into `web/dist` and then served by the FastAPI process.
 
 ## Primary Flow
 
-1. A user explicitly addresses the bot in a guild message by mentioning the bot account, mentioning an agent token such as `@pm`, or replying to a prior agent message.
+1. A user explicitly addresses the bot in a guild message by mentioning the bot account or replying to a prior bot message.
 2. The Discord adapter normalizes the incoming message into a typed `IncomingDiscordMessage`.
-3. Routing chooses an `AgentRole` using this precedence:
-   - first explicit persona mention token
-   - reply target persona
-   - default product manager fallback
-4. The adapter converts that into a `DispatchRequest`.
-5. The LangGraph runtime loads or creates thread state using the configured SQLite checkpoint store.
-6. The selected placeholder agent executes.
-7. If the execution returns handoffs, the graph emits a synthetic handoff message and routes to the next agent.
-8. The current turn’s messages are returned to the Discord transport for publication.
-
-## Settings Flow
+3. Routing converts the message into a `DispatchRequest` that enters the product manager entrypoint.
+4. The LangGraph runtime loads or creates thread state using the configured SQLite checkpoint store.
+5. The selected placeholder agent executes.
+6. If the execution returns handoffs, the graph routes to the next internal agent without emitting a public Discord handoff message.
+7. The current turn’s messages are returned to the Discord transport for publication as a single public bot reply.
 
 ## Discord Install Flow
 
@@ -62,24 +56,24 @@ The orchestration state keeps both a cumulative transcript and a turn-local tran
 
 - `transcript` persists all agent-visible messages for checkpoint recovery.
 - `turn_transcript` is reset at the start of each dispatch and contains only the current turn’s emitted messages.
-- `pending_handoffs` stores structured handoff requests between agent nodes.
+- `pending_handoffs` stores structured handoff requests between agent nodes without forcing those internal transitions into the public Discord transcript.
 
 This split allows persistent execution without forcing the Discord transport to re-send historical messages on every invocation.
 
 ## Discord Surface
 
-The Discord client uses a single bot token for inbound events and optional per-agent webhooks for outbound persona rendering.
+The Discord client uses a single bot token for both inbound events and outbound publication.
 
 Inbound dispatch:
 
-- token-based mentions such as `@pm`
-- raw Discord mention strings such as `<@&role-id>`
-- replies to a message previously authored by an agent persona
+- direct bot mentions
+- replies to a message previously authored by the bot
+- slash commands such as `/settings`
 
 Outbound publication:
 
-- webhook send with persona display name when a webhook URL exists
-- channel send fallback prefixed with the persona display name when no webhook exists
+- message-triggered work returns one public bot reply for the turn
+- slash-command flows defer the interaction and publish status via `edit_original_response`
 
 ## Extension Points
 

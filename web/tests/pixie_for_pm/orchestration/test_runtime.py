@@ -55,8 +55,8 @@ async def test_orchestrator_runs_placeholder_agent_and_persists_sqlite_checkpoin
             thread_id="discord-thread-123",
             author_id=30,
             content="Help me frame a PM agent product strategy.",
-            mentioned_agents=(),
-            reply_to_agent=None,
+            directly_mentions_bot=True,
+            is_reply_to_bot=False,
         )
     )
 
@@ -73,7 +73,7 @@ async def test_orchestrator_runs_placeholder_agent_and_persists_sqlite_checkpoin
 
 
 @pytest.mark.asyncio
-async def test_orchestrator_turns_handoffs_into_synthetic_agent_messages(
+async def test_orchestrator_keeps_handoffs_out_of_the_public_transcript(
     tmp_path: Path,
 ) -> None:
     handlers: dict[AgentRole, AgentHandler] = {
@@ -87,8 +87,8 @@ async def test_orchestrator_turns_handoffs_into_synthetic_agent_messages(
             thread_id="discord-thread-456",
             author_id=31,
             content="Is this market large enough for a vertical product?",
-            mentioned_agents=(),
-            reply_to_agent=None,
+            directly_mentions_bot=True,
+            is_reply_to_bot=False,
         )
     )
 
@@ -100,8 +100,6 @@ async def test_orchestrator_turns_handoffs_into_synthetic_agent_messages(
 
     assert [message.agent for message in result.transcript] == [
         AgentRole.PRODUCT_MANAGER,
-        AgentRole.PRODUCT_MANAGER,
         AgentRole.MARKET_ANALYST,
     ]
-    assert "handoff" in result.transcript[1].content.lower()
-    assert "market analyst" in result.transcript[1].content.lower()
+    assert all("handoff" not in message.content.lower() for message in result.transcript)

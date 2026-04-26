@@ -2,7 +2,7 @@
 
 let's setup the scaffolding for the project now.
 
-The system would be a multi-agent system, while work is triggered by discord message in a particular server.
+The system would be a multi-agent system internally, while work is triggered by a single Discord bot in a particular server.
 
 we're going to have 5 different agents:
 
@@ -12,9 +12,9 @@ we're going to have 5 different agents:
 - data scientist: product data analytics
 - product designer: product mocking
 
-each agent would map to a unique character (avatar) in discord, and work can be directly dispatched to the agent via @mention/reply to thread. Message without @mention or thread should be handled by the product manager to start and delegate as needed.
+Discord should expose one public bot identity. Work starts when a user mentions the bot, replies to a prior bot message, or runs a slash command. The product manager should remain the entrypoint agent and delegate internally as needed.
 
-Each agent would also be able to handle-off/create work for other agent as needed. Each handoff should trigger discord messages to give the appearance that the handleoff is triggered by an agent @mention/respond to another agent, while the real-handleoff should happen within the orchestration framework.
+Each agent should still be able to hand off work internally through the orchestration framework, but those handoffs should not appear as separate Discord personas or synthetic agent-to-agent messages. If a slash-command flow needs progress updates, use deferred interaction replies and edits instead.
 
 We are going to use Langgraph as the orchestration. We'd need to have proper persistant execution feature eanbled. For now let's have a empty placeholder function for each of the agent.
 

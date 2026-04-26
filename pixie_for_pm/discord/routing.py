@@ -8,22 +8,15 @@ from pixie_for_pm.domain.models import (
 
 
 def build_dispatch_request(message: IncomingDiscordMessage) -> DispatchRequest:
-    if message.mentioned_agents:
-        return DispatchRequest(
-            message=message,
-            target_agent=message.mentioned_agents[0],
-            reason="mentioned_agent",
-        )
-
-    if message.reply_to_agent is not None:
-        return DispatchRequest(
-            message=message,
-            target_agent=message.reply_to_agent,
-            reason="reply_to_agent",
-        )
+    if message.is_reply_to_bot:
+        reason = "reply_to_bot"
+    elif message.directly_mentions_bot:
+        reason = "direct_bot_mention"
+    else:
+        reason = "discord_message"
 
     return DispatchRequest(
         message=message,
         target_agent=AgentRole.PRODUCT_MANAGER,
-        reason="default_product_manager",
+        reason=reason,
     )

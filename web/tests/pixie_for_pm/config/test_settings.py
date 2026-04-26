@@ -3,31 +3,23 @@ from pathlib import Path
 import pytest
 
 from pixie_for_pm.config.settings import load_settings
-from pixie_for_pm.domain.models import AgentRole
 
 
-def test_load_settings_builds_personas_from_environment() -> None:
+def test_load_settings_uses_core_environment_values() -> None:
     settings = load_settings(
         {
             "DISCORD_BOT_TOKEN": "discord-token",
             "LANGGRAPH_CHECKPOINT_PATH": ".state/pixie.sqlite",
             "WEB_APP_URL": "https://app.pixie.test",
-            "DISCORD_MARKET_ANALYST_MENTION_TOKENS": "@market-analyst,<@&42>",
-            "DISCORD_MARKET_ANALYST_WEBHOOK_URL": "https://discord.com/api/webhooks/test",
         }
     )
 
     assert settings.discord_guild_id is None
+    assert settings.discord_bot_token == "discord-token"
     assert settings.langgraph_checkpoint_path == Path(".state/pixie.sqlite")
     assert settings.web_app_url == "https://app.pixie.test"
-    assert settings.personas[AgentRole.MARKET_ANALYST].mention_tokens == (
-        "@market-analyst",
-        "<@&42>",
-    )
-    assert (
-        settings.personas[AgentRole.MARKET_ANALYST].webhook_url
-        == "https://discord.com/api/webhooks/test"
-    )
+    assert settings.oauth_client_ids == {}
+    assert settings.oauth_client_secrets == {}
 
 
 def test_load_settings_supports_web_server_configuration() -> None:

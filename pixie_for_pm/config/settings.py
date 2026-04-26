@@ -3,17 +3,8 @@ from __future__ import annotations
 import os
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Final
 
 from pixie_for_pm.discord.install import default_install_permissions
-from pixie_for_pm.domain.models import AgentRole
-
-
-@dataclass(frozen=True)
-class AgentPersonaConfig:
-    display_name: str
-    mention_tokens: tuple[str, ...]
-    webhook_url: str | None
 
 
 @dataclass(frozen=True)
@@ -40,28 +31,6 @@ class AppSettings:
     oauth_callback_url: str | None
     oauth_client_ids: dict[str, str]
     oauth_client_secrets: dict[str, str]
-    personas: dict[AgentRole, AgentPersonaConfig]
-
-
-DEFAULT_PERSONAS: Final[dict[AgentRole, tuple[str, tuple[str, ...]]]] = {
-    AgentRole.PRODUCT_MANAGER: ("Pixie PM", ("@pm", "@product-manager")),
-    AgentRole.MARKET_ANALYST: (
-        "Pixie Market Analyst",
-        ("@market", "@market-analyst"),
-    ),
-    AgentRole.USER_RESEARCHER: (
-        "Pixie User Researcher",
-        ("@uxr", "@user-researcher"),
-    ),
-    AgentRole.DATA_SCIENTIST: (
-        "Pixie Data Scientist",
-        ("@data", "@data-scientist"),
-    ),
-    AgentRole.PRODUCT_DESIGNER: (
-        "Pixie Product Designer",
-        ("@design", "@product-designer"),
-    ),
-}
 
 
 def _parse_dotenv_value(raw_value: str) -> str:
@@ -96,13 +65,6 @@ def _require(env: dict[str, str], key: str) -> str:
     return value
 
 
-def _parse_tokens(raw_value: str) -> tuple[str, ...]:
-    tokens = tuple(token.strip() for token in raw_value.split(",") if token.strip())
-    if not tokens:
-        raise ValueError("Mention token configuration must include at least one token.")
-    return tokens
-
-
 def _optional(env: dict[str, str], key: str) -> str | None:
     value = env.get(key)
     if value is None:
@@ -128,28 +90,12 @@ def _load_oauth_values(env: dict[str, str], suffix: str) -> dict[str, str]:
     return values
 
 
-def _load_persona(env: dict[str, str], role: AgentRole) -> AgentPersonaConfig:
-    default_name, default_tokens = DEFAULT_PERSONAS[role]
-    env_prefix = f"DISCORD_{role.name}"
-    display_name = env.get(f"{env_prefix}_DISPLAY_NAME", default_name)
-    mention_tokens = _parse_tokens(
-        env.get(f"{env_prefix}_MENTION_TOKENS", ",".join(default_tokens))
-    )
-    webhook_url = env.get(f"{env_prefix}_WEBHOOK_URL") or None
-    return AgentPersonaConfig(
-        display_name=display_name,
-        mention_tokens=mention_tokens,
-        webhook_url=webhook_url,
-    )
-
-
 def load_settings(env: dict[str, str] | None = None) -> AppSettings:
     if env is None:
         source_env = dict(os.environ)
         source_env.update(_load_local_dotenv())
     else:
         source_env = dict(env)
-    personas = {role: _load_persona(source_env, role) for role in AgentRole}
     return AppSettings(
         discord_bot_token=_require(source_env, "DISCORD_BOT_TOKEN"),
         discord_application_id=(
@@ -182,5 +128,4 @@ def load_settings(env: dict[str, str] | None = None) -> AppSettings:
         oauth_callback_url=_optional(source_env, "OAUTH_CALLBACK_URL"),
         oauth_client_ids=_load_oauth_values(source_env, "CLIENT_ID"),
         oauth_client_secrets=_load_oauth_values(source_env, "CLIENT_SECRET"),
-        personas=personas,
     )

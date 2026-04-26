@@ -2,24 +2,24 @@ from pixie_for_pm.discord.routing import build_dispatch_request
 from pixie_for_pm.domain.models import AgentRole, IncomingDiscordMessage
 
 
-def test_routes_explicit_agent_mentions_first() -> None:
+def test_routes_direct_bot_mentions_to_the_product_manager_entrypoint() -> None:
     request = build_dispatch_request(
         IncomingDiscordMessage(
             discord_message_id=101,
             channel_id=202,
             thread_id=None,
             author_id=303,
-            content="@market-analyst can you size this category?",
-            mentioned_agents=(AgentRole.MARKET_ANALYST,),
-            reply_to_agent=AgentRole.USER_RESEARCHER,
+            content="<@999> can you size this category?",
+            directly_mentions_bot=True,
+            is_reply_to_bot=False,
         )
     )
 
-    assert request.target_agent is AgentRole.MARKET_ANALYST
-    assert request.reason == "mentioned_agent"
+    assert request.target_agent is AgentRole.PRODUCT_MANAGER
+    assert request.reason == "direct_bot_mention"
 
 
-def test_routes_replys_to_the_agent_that_started_the_thread() -> None:
+def test_routes_bot_replies_back_to_the_product_manager_entrypoint() -> None:
     request = build_dispatch_request(
         IncomingDiscordMessage(
             discord_message_id=111,
@@ -27,16 +27,16 @@ def test_routes_replys_to_the_agent_that_started_the_thread() -> None:
             thread_id="thread-1",
             author_id=333,
             content="Can you expand on that?",
-            mentioned_agents=(),
-            reply_to_agent=AgentRole.PRODUCT_DESIGNER,
+            directly_mentions_bot=False,
+            is_reply_to_bot=True,
         )
     )
 
-    assert request.target_agent is AgentRole.PRODUCT_DESIGNER
-    assert request.reason == "reply_to_agent"
+    assert request.target_agent is AgentRole.PRODUCT_MANAGER
+    assert request.reason == "reply_to_bot"
 
 
-def test_defaults_new_unaddressed_messages_to_product_manager() -> None:
+def test_routes_other_messages_to_the_product_manager_entrypoint() -> None:
     request = build_dispatch_request(
         IncomingDiscordMessage(
             discord_message_id=121,
@@ -44,10 +44,10 @@ def test_defaults_new_unaddressed_messages_to_product_manager() -> None:
             thread_id=None,
             author_id=343,
             content="We should explore an AI PM copilot.",
-            mentioned_agents=(),
-            reply_to_agent=None,
+            directly_mentions_bot=False,
+            is_reply_to_bot=False,
         )
     )
 
     assert request.target_agent is AgentRole.PRODUCT_MANAGER
-    assert request.reason == "default_product_manager"
+    assert request.reason == "discord_message"

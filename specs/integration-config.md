@@ -13,7 +13,7 @@ Add a web UI where users configure which external systems the PM agents can acce
 The repo already has:
 
 - `pixie_for_pm/integrations/` — provider placeholders for Notion, GitHub, PostHog, Vercel
-- `pixie_for_pm/discord/` — bot transport, routing, mention parsing
+- `pixie_for_pm/discord/` — bot transport, routing, and single-bot message normalization
 - `pixie_for_pm/config/` — environment loading
 - `pixie_for_pm/domain/` — typed workflow models
 - `specs/` — architecture docs
@@ -135,7 +135,7 @@ Pixie's bot installation flow is intentionally separate from the Discord login c
 
 This separation is required because the login flow expects `code` and `state` for user auth, while the install flow just adds the bot/application commands to a guild.
 
-The per-server channel configuration now comes from `/settings`: the command captures the current Discord channel, the web flow persists it on the claimed server record, and the bot runtime only responds when a message belongs to that stored channel or one of its threads.
+The public Discord surface is intentionally narrow: `/settings` is used to open the authenticated web flow, while message-triggered work starts only when a user explicitly mentions the bot or replies to a prior bot message.
 
 ### 2.1 Discord OAuth via FastAPI Session Cookies
 

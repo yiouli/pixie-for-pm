@@ -1,40 +1,22 @@
-from pixie_for_pm.config.settings import load_settings
 from pixie_for_pm.discord.normalization import (
-    detect_mentioned_agents,
-    detect_reply_agent,
+    detect_direct_bot_mention,
+    detect_reply_to_bot,
 )
-from pixie_for_pm.domain.models import AgentRole
 
 
-def test_detect_mentioned_agents_uses_persona_tokens() -> None:
-    personas = load_settings(
-        {
-            "DISCORD_BOT_TOKEN": "discord-token",
-            "DISCORD_GUILD_ID": "123",
-            "DISCORD_PRODUCT_MANAGER_MENTION_TOKENS": "@pm",
-            "DISCORD_USER_RESEARCHER_MENTION_TOKENS": "@uxr",
-        }
-    ).personas
-
-    mentioned_agents = detect_mentioned_agents(
-        "@uxr please work with @pm on interview follow-up.", personas
+def test_detect_direct_bot_mention_matches_both_discord_formats() -> None:
+    mentioned = detect_direct_bot_mention(
+        "<@123> can you help? <@!123> also works.",
+        bot_user_id=123,
     )
 
-    assert mentioned_agents == (
-        AgentRole.PRODUCT_MANAGER,
-        AgentRole.USER_RESEARCHER,
-    )
+    assert mentioned is True
 
 
-def test_detect_reply_agent_matches_persona_display_name() -> None:
-    personas = load_settings(
-        {
-            "DISCORD_BOT_TOKEN": "discord-token",
-            "DISCORD_GUILD_ID": "123",
-            "DISCORD_PRODUCT_DESIGNER_DISPLAY_NAME": "Pixie Designer",
-        }
-    ).personas
+def test_detect_reply_to_bot_matches_the_bot_author_id() -> None:
+    assert detect_reply_to_bot(reply_author_id=123, bot_user_id=123) is True
 
-    reply_agent = detect_reply_agent("Pixie Designer", personas)
 
-    assert reply_agent is AgentRole.PRODUCT_DESIGNER
+def test_detect_reply_to_bot_rejects_other_authors() -> None:
+    assert detect_reply_to_bot(reply_author_id=456, bot_user_id=123) is False
+

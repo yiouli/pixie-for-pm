@@ -9,7 +9,7 @@ The e2e flow verifies all of the following in one pass:
 - the Discord bot can connect to your server
 - explicit mention and reply triggers work
 - message normalization and routing work
-- LangGraph runs the selected placeholder agent
+- LangGraph runs the product manager entrypoint and any internal handoffs it chooses
 - SQLite checkpoint persistence is created locally
 - the bot sends a response back to Discord
 
@@ -74,7 +74,7 @@ Create one channel in the target server for orchestration traffic, for example:
 
 - `#pixie-lab`
 
-You only need one channel for the basic e2e flow. Webhooks are optional for the first pass.
+You only need one channel for the basic e2e flow.
 
 ## 5. Collect Discord IDs
 
@@ -98,18 +98,7 @@ CONNECTION_STORE_SQLITE_PATH=.state/pixie-connection-store.sqlite
 LANGGRAPH_CHECKPOINT_PATH=.state/pixie-langgraph.sqlite
 ```
 
-For local runs without Supabase, `CONNECTION_STORE_SQLITE_PATH` is how the web app and the bot share per-server channel configuration and credentials across separate processes.
 For local runs without Supabase, `CONNECTION_STORE_SQLITE_PATH` is how the web app and the bot share claimed servers and credentials across separate processes.
-
-The default mention tokens in `.env.example` are already enough for a first e2e run:
-
-- `@pm`
-- `@market`
-- `@uxr`
-- `@data`
-- `@design`
-
-You do not need webhook URLs for the first test. If webhook URLs are empty, the bot falls back to normal channel messages with the persona display name prefixed.
 
 ## 7. Start the Bot
 
@@ -136,7 +125,7 @@ This step claims the server for your account so settings and provider credential
 
 Open any channel in the installed Discord server and send the following messages.
 
-### Check A: Direct Bot Mention Routes to Product Manager
+### Check A: Direct Bot Mention Reaches the Product Manager Entrypoint
 
 Send:
 
@@ -156,23 +145,19 @@ Example shape:
 E2E_PLACEHOLDER_OK [product manager] Discord -> LangGraph -> agent -> Discord loop is working. Original message: Can you help me test the Pixie bot?
 ```
 
-### Check B: Explicit Agent Mention Routing
+### Check B: Reply Routing
 
-Send each of these one by one:
+Reply to the bot's message from Check A with:
 
 ```text
-@market please verify the routing
-@uxr please verify the routing
-@data please verify the routing
-@design please verify the routing
-@pm please verify the routing
+Can you continue that analysis?
 ```
 
-Expected result for each message:
+Expected result:
 
-- the bot replies once
+- the bot replies once more in the same channel
 - the response starts with `E2E_PLACEHOLDER_OK`
-- the response includes the matching agent name
+- the response stays on the single public bot surface instead of switching personas
 
 ### Check C: Thread Reply Routing
 
@@ -187,7 +172,7 @@ Expected result:
 
 - the bot responds inside the thread
 - the response starts with `E2E_PLACEHOLDER_OK`
-- the response comes from the same agent persona path that produced the message you replied to
+- the response comes from the same public bot identity
 
 ## 10. Verify Local Persistence
 
@@ -203,19 +188,6 @@ Expected result:
 - both files exist
 - the checkpoint file timestamp updates as you continue sending messages
 
-## 11. Optional Persona Webhook Check
-
-If you want each agent to appear with a separate Discord name and avatar:
-
-1. Create a webhook for the test channel.
-2. Put the webhook URL into the matching `DISCORD_<ROLE>_WEBHOOK_URL` variable.
-3. Restart the bot.
-
-Expected result:
-
-- responses still start with `E2E_PLACEHOLDER_OK`
-- outbound messages render with the configured persona display name instead of the plain fallback prefix
-
 ## Fast Troubleshooting
 
 If the bot does not respond:
@@ -223,15 +195,9 @@ If the bot does not respond:
 - verify the install flow completed and the bot appears in the server member list
 - verify the bot and web server are using the same `CONNECTION_STORE_SQLITE_PATH` when Supabase is not configured
 - verify `Message Content Intent` is enabled
-- verify you explicitly mentioned the bot or an agent token such as `@pm`
+- verify you explicitly mentioned the bot or replied to one of the bot's prior messages
 - verify the bot can read and send messages in the test channel
 - verify you started the bot from the repository root with `uv run pixie-discord-bot`
-
-If the bot responds in the wrong agent persona:
-
-- verify your mention tokens match the values in `.env`
-- remember that messages with no mention default to the product manager
-- remember that replies route back to the replied-to agent when the display name matches a configured persona
 
 If persistence is not created:
 
@@ -245,7 +211,7 @@ For a quick smoke test, use this order:
 1. start the bot
 2. run `/settings` once and open the settings page
 3. send one bot mention and confirm the product manager response
-4. send `@market please verify the routing`
+4. reply to the bot and confirm the follow-up response
 5. open a thread and reply inside it
 6. verify both SQLite files exist
 

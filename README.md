@@ -4,7 +4,7 @@ pixie-for-pm is a Discord-triggered, LangGraph-orchestrated product collaboratio
 
 ## Agents
 
-The scaffold includes five agent roles, each with a dedicated Discord persona surface and a placeholder execution function:
+The scaffold keeps five internal agent roles, each with a placeholder execution function:
 
 - product manager
 - market analyst
@@ -12,7 +12,7 @@ The scaffold includes five agent roles, each with a dedicated Discord persona su
 - data scientist
 - product designer
 
-Messages without an explicit agent mention default to the product manager. Replies to an agent-authored message route back to that same agent. Agents can hand work off internally through the orchestration layer, and the scaffold emits a synthetic handoff message so Discord users see the delegation happen in-channel.
+Discord exposes a single public bot identity. Users start work by mentioning the bot, replying to a prior bot message, or using a slash command. LangGraph can still hand work across internal agents, but those handoffs are not rendered as separate Discord personas or synthetic in-channel messages.
 
 ## Architecture
 
@@ -21,8 +21,8 @@ The package layout follows explicit boundaries:
 ```text
 pixie_for_pm/
   agents/          # placeholder agent handlers and registry
-  config/          # environment loading and persona configuration
-  discord/         # routing, mention parsing, bot transport shell
+  config/          # environment loading
+  discord/         # routing, bot mention normalization, bot transport shell
   domain/          # typed workflow models shared across layers
   integrations/    # provider registry and credential access helpers
   orchestration/   # LangGraph workflow and runtime
@@ -46,12 +46,12 @@ changelogs/
 
 The runtime flow is:
 
-1. Discord receives a message that explicitly addresses the bot through a bot mention, an agent-token mention, or a reply to a prior agent message.
+1. Discord receives a message that explicitly addresses the bot through a bot mention or a reply to a prior bot message.
 2. The Discord adapter normalizes message content into a typed dispatch request.
-3. Routing selects the mentioned agent, reply target, or the default product manager.
-4. LangGraph invokes the selected placeholder agent and persists checkpoint state to SQLite.
-5. If an agent requests a handoff, the orchestration layer generates a synthetic handoff message and then routes control to the target agent.
-6. The Discord adapter publishes the current turn’s agent messages back to the thread using persona webhooks when configured, with a bot-message fallback when they are not.
+3. Routing enters the product manager entrypoint while preserving whether the trigger was a direct mention or a reply.
+4. LangGraph invokes the internal agents it needs and persists checkpoint state to SQLite.
+5. Internal handoffs stay inside the orchestration graph instead of being emitted as Discord messages.
+6. The Discord adapter publishes a single bot reply for the turn. Slash-command follow-up state is delivered through deferred interaction responses.
 
 The Discord install flow is:
 
@@ -74,15 +74,13 @@ The integration settings flow is:
 
 LangGraph persistence is enabled through `AsyncSqliteSaver`. The checkpoint database path is configured with `LANGGRAPH_CHECKPOINT_PATH`, which defaults in the example environment to `.state/pixie-langgraph.sqlite`.
 
-## Discord Persona Model
+## Discord Bot Surface
 
-Each agent persona is configured with:
+Pixie uses one installed Discord bot identity for all public communication.
 
-- a display name
-- one or more mention tokens used for inbound dispatch
-- an optional webhook URL used to send messages with that persona’s avatar and name
-
-The scaffold supports plain-text aliases such as `@pm` as well as raw Discord mention strings like `<@&role-id>` when you map a Discord role to an agent persona.
+- inbound triggers are direct bot mentions, replies to prior bot-authored messages, and slash commands
+- internal LangGraph handoffs remain private to the orchestration layer
+- slash-command status updates should use deferred interaction replies and edits instead of agent-to-agent Discord messages
 
 ## Local Setup
 
@@ -120,7 +118,7 @@ Open `http://localhost:8000`. FastAPI serves the latest files from `web/dist`, s
 
 The root page at `http://localhost:8000/` is the install surface for the Discord bot. The installer now chooses the target server in Discord's authorize UI instead of Pixie preselecting one.
 
-The bot no longer relies on any configured Discord channel. It reacts only when explicitly addressed: a direct bot mention, an agent token mention such as `@pm`, or a reply to a previous agent message.
+The bot no longer relies on any configured Discord channel. It reacts only when explicitly addressed: a direct bot mention or a reply to a previous bot message.
 
 Create `web/.env` from `web/.env.example`. Leave `VITE_API_URL` empty to use the same origin as FastAPI, or set it explicitly only when the frontend should call a different API host.
 
@@ -141,7 +139,7 @@ For a full manual Discord verification flow, including Discord app setup, bot in
 
 This scaffold now covers the first integration-management slice:
 
-- Discord transport handles message routing for explicit mentions, replies to agent messages, and the `/settings` slash command.
+- Discord transport handles direct bot mentions, replies to bot-authored messages, and the `/settings` slash command.
 - FastAPI exposes the bot install page/redirect, settings, claim, connection, OAuth callback, and internal credential routes.
 - Credentials are encrypted before storage and decrypted only on the internal server-to-server path.
 - The web frontend provides the initial settings UX for OAuth and API-key providers.
