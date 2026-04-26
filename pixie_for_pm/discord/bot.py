@@ -7,6 +7,7 @@ from typing import Protocol
 import discord
 from discord import app_commands
 
+from pixie_for_pm.agents.registry import build_product_manager_handler
 from pixie_for_pm.config.settings import AppSettings, load_settings
 from pixie_for_pm.discord.commands.settings import install_settings_command
 from pixie_for_pm.discord.normalization import (
@@ -14,7 +15,7 @@ from pixie_for_pm.discord.normalization import (
     detect_reply_to_bot,
 )
 from pixie_for_pm.discord.routing import build_dispatch_request
-from pixie_for_pm.domain.models import AgentMessage, IncomingDiscordMessage
+from pixie_for_pm.domain.models import AgentMessage, AgentRole, IncomingDiscordMessage
 from pixie_for_pm.integrations.toolset import build_toolset_initializer
 from pixie_for_pm.orchestration.runtime import PixieOrchestrator
 
@@ -50,6 +51,12 @@ class PixieDiscordBot(discord.Client):
         self._settings = settings
         self._orchestrator = PixieOrchestrator(
             settings.langgraph_checkpoint_path,
+            agent_handlers={
+                AgentRole.PRODUCT_MANAGER: build_product_manager_handler(
+                    model=settings.product_manager_model,
+                    openai_api_key=settings.openai_api_key,
+                )
+            },
             toolset_initializer=build_toolset_initializer(settings),
         )
         self.tree = app_commands.CommandTree(self)
@@ -153,10 +160,19 @@ class PixieDiscordBot(discord.Client):
             return thread
         return None
 
+    def _is_reply_to_bot_message(self, message: discord.Message) -> bool:
+        bot_user_id = self.user.id if self.user is not None else None
+        return detect_reply_to_bot(
+            reply_author_id=self._reply_author_id(message),
+            bot_user_id=bot_user_id,
+        )
+
     def _response_channel(self, message: discord.Message) -> object:
         thread = self._message_thread(message)
         if thread is not None:
             return thread
+        if self._is_reply_to_bot_message(message):
+            return message
         return message.channel
 
     async def _publish_transcript(
@@ -164,6 +180,11 @@ class PixieDiscordBot(discord.Client):
         channel: object,
         transcript: Sequence[AgentMessage],
     ) -> None:
+        reply_send = getattr(channel, "reply", None)
+        if reply_send is not None:
+            await reply_send(compose_public_reply(transcript), mention_author=False)
+            return
+
         channel_send = getattr(channel, "send", None)
         if channel_send is None:
             raise RuntimeError(

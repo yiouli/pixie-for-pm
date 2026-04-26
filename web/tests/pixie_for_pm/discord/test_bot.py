@@ -223,6 +223,10 @@ class _FakeDiscordMessage:
         self.guild = _FakeGuild(guild_id)
         self.reference = reference
         self.webhook_id = None
+        self.reply_messages: list[tuple[str, bool | None]] = []
+
+    async def reply(self, content: str, *, mention_author: bool | None = None) -> None:
+        self.reply_messages.append((content, mention_author))
 
 
 class _FakeOrchestrator:
@@ -278,6 +282,12 @@ class _FakeBot:
             message,
         )
 
+    def _is_reply_to_bot_message(self, message: discord.Message) -> bool:
+        return PixieDiscordBot._is_reply_to_bot_message(
+            cast(PixieDiscordBot, self),
+            message,
+        )
+
     def _response_channel(self, message: discord.Message) -> object:
         return PixieDiscordBot._response_channel(
             cast(PixieDiscordBot, self),
@@ -322,3 +332,32 @@ async def test_reply_to_thread_starter_reuses_existing_thread(
     assert orchestrator.requests[0].message.thread_id == "55"
     assert channel.messages == []
     assert thread.messages == ["Thread reply from Pixie"]
+
+
+@pytest.mark.asyncio
+async def test_reply_to_bot_message_replies_to_source_message(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(discord, "Message", _FakeResolvedMessage)
+    monkeypatch.setattr(discord, "Thread", _FakeThread)
+
+    channel = _FakeChannel(22)
+    message = _FakeDiscordMessage(
+        message_id=8,
+        content="who are you",
+        author_id=42,
+        channel=channel,
+        guild_id=99,
+        reference=_FakeReference(_FakeResolvedMessage(author_id=999)),
+    )
+    orchestrator = _FakeOrchestrator()
+    fake_bot = _FakeBot(orchestrator, user_id=999)
+
+    await PixieDiscordBot.on_message(
+        cast(PixieDiscordBot, fake_bot),
+        cast(discord.Message, message),
+    )
+
+    assert len(orchestrator.requests) == 1
+    assert channel.messages == []
+    assert message.reply_messages == [("Thread reply from Pixie", False)]

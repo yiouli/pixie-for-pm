@@ -1,8 +1,9 @@
 from pathlib import Path
 
 import pytest
+from langchain_core.language_models.fake_chat_models import FakeListChatModel
 
-from pixie_for_pm.agents.registry import AgentHandler
+from pixie_for_pm.agents.registry import AgentHandler, build_product_manager_handler
 from pixie_for_pm.discord.routing import build_dispatch_request
 from pixie_for_pm.domain.models import (
     AgentExecution,
@@ -19,6 +20,18 @@ from pixie_for_pm.integrations.toolset import (
     ToolsetInitializer,
 )
 from pixie_for_pm.orchestration.runtime import PixieOrchestrator
+
+
+class _ToolCallingFakeListChatModel(FakeListChatModel):
+    def bind_tools(
+        self,
+        tools: object,
+        *,
+        tool_choice: object | None = None,
+        **kwargs: object,
+    ) -> "_ToolCallingFakeListChatModel":
+        del tools, tool_choice, kwargs
+        return self
 
 
 async def _pm_with_handoff(context: WorkflowContext) -> AgentExecution:
@@ -78,7 +91,7 @@ async def _assert_tool_context(context: WorkflowContext) -> AgentExecution:
 
 
 @pytest.mark.asyncio
-async def test_orchestrator_runs_placeholder_agent_and_persists_sqlite_checkpoint(
+async def test_orchestrator_runs_product_manager_deep_agent_and_persists_sqlite_checkpoint(
     tmp_path: Path,
 ) -> None:
     request = build_dispatch_request(
@@ -95,7 +108,17 @@ async def test_orchestrator_runs_placeholder_agent_and_persists_sqlite_checkpoin
     )
 
     async with PixieOrchestrator(
-        checkpoint_path=tmp_path / "pixie.sqlite"
+        checkpoint_path=tmp_path / "pixie.sqlite",
+        agent_handlers={
+            AgentRole.PRODUCT_MANAGER: build_product_manager_handler(
+                model=_ToolCallingFakeListChatModel(
+                    responses=[
+                        "PM_AGENT_OK Product strategy memo: prioritize onboarding, "
+                        "activation, and weekly retained teams."
+                    ]
+                )
+            )
+        },
     ) as orchestrator:
         result = await orchestrator.dispatch(request)
 
@@ -103,7 +126,8 @@ async def test_orchestrator_runs_placeholder_agent_and_persists_sqlite_checkpoin
     assert [message.agent for message in result.transcript] == [
         AgentRole.PRODUCT_MANAGER
     ]
-    assert "placeholder" in result.transcript[0].content.lower()
+    assert result.transcript[0].content.startswith("PM_AGENT_OK")
+    assert "onboarding" in result.transcript[0].content.lower()
 
 
 @pytest.mark.asyncio

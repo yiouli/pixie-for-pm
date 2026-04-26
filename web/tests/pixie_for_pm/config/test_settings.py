@@ -16,8 +16,10 @@ def test_load_settings_uses_core_environment_values() -> None:
 
     assert settings.discord_guild_id is None
     assert settings.discord_bot_token == "discord-token"
+    assert settings.openai_api_key is None
     assert settings.langgraph_checkpoint_path == Path(".state/pixie.sqlite")
     assert settings.web_app_url == "https://app.pixie.test"
+    assert settings.product_manager_model == "openai:gpt-5.4"
     assert settings.oauth_client_ids == {}
     assert settings.oauth_client_secrets == {}
 
@@ -26,6 +28,7 @@ def test_load_settings_supports_web_server_configuration() -> None:
     settings = load_settings(
         {
             "DISCORD_BOT_TOKEN": "discord-token",
+            "OPENAI_API_KEY": "openai-key",
             "DISCORD_APPLICATION_ID": "discord-app-id",
             "WEB_APP_URL": "https://app.pixie.test",
             "DISCORD_OAUTH_CLIENT_ID": "discord-client-id",
@@ -44,10 +47,12 @@ def test_load_settings_supports_web_server_configuration() -> None:
             "VERCEL_CLIENT_SECRET": "vercel-secret",
             "AIRTABLE_CLIENT_ID": "airtable-id",
             "AIRTABLE_CLIENT_SECRET": "airtable-secret",
+            "PRODUCT_MANAGER_MODEL": "openai:gpt-5.2-codex",
         }
     )
 
     assert settings.discord_application_id == "discord-app-id"
+    assert settings.openai_api_key == "openai-key"
     assert settings.discord_oauth_client_id == "discord-client-id"
     assert settings.discord_oauth_client_secret == "discord-client-secret"
     assert settings.discord_oauth_callback_url == (
@@ -69,6 +74,7 @@ def test_load_settings_supports_web_server_configuration() -> None:
     assert settings.oauth_client_secrets["github"] == "github-secret"
     assert settings.oauth_client_secrets["vercel"] == "vercel-secret"
     assert settings.oauth_client_secrets["airtable"] == "airtable-secret"
+    assert settings.product_manager_model == "openai:gpt-5.2-codex"
 
 
 def test_load_settings_does_not_require_provider_mcp_server_configuration() -> None:

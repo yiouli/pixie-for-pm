@@ -19,7 +19,7 @@ The first surface is a single public Discord bot. The second surface is a settin
 3. Routing converts the message into a `DispatchRequest` that enters the product manager entrypoint.
 4. The orchestrator derives a typed Discord trigger context, resolves the guild's active integrations, and expands them into a request-scoped tool bundle built from `langchain_core` tools.
 5. The LangGraph runtime loads or creates thread state using the configured SQLite checkpoint store.
-6. The selected placeholder agent executes with access to the typed trigger context and initialized tool bundle.
+6. The selected agent executes with access to the typed trigger context and initialized tool bundle.
 7. If the execution returns handoffs, the graph routes to the next internal agent without emitting a public Discord handoff message.
 8. The current turn’s messages are returned to the Discord transport for publication as a single public bot reply.
 
@@ -77,7 +77,7 @@ Outbound publication:
 
 ## Extension Points
 
-- Replace placeholder handlers in `pixie_for_pm/agents/registry.py` with real agent implementations.
+- Replace the remaining placeholder handlers in `pixie_for_pm/agents/registry.py` with real agent implementations.
 - Extend the hosted-MCP and API-backed provider runtime layer under `pixie_for_pm/integrations/` while keeping the typed toolset initializer stable.
 - Extend the FastAPI settings layer with live Supabase-backed persistence, token refresh, and provider-specific validation hardening.
 - Enrich the Discord adapter with thread ownership and richer error translation.

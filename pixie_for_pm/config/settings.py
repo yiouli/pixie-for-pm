@@ -10,6 +10,7 @@ from pixie_for_pm.discord.install import default_install_permissions
 @dataclass(frozen=True)
 class AppSettings:
     discord_bot_token: str
+    openai_api_key: str | None
     discord_application_id: str | None
     discord_guild_id: int | None
     discord_install_permissions: int
@@ -31,6 +32,7 @@ class AppSettings:
     oauth_callback_url: str | None
     oauth_client_ids: dict[str, str]
     oauth_client_secrets: dict[str, str]
+    product_manager_model: str
 
 
 def _parse_dotenv_value(raw_value: str) -> str:
@@ -98,6 +100,7 @@ def load_settings(env: dict[str, str] | None = None) -> AppSettings:
         source_env = dict(env)
     return AppSettings(
         discord_bot_token=_require(source_env, "DISCORD_BOT_TOKEN"),
+        openai_api_key=_optional(source_env, "OPENAI_API_KEY"),
         discord_application_id=(
             _optional(source_env, "DISCORD_APPLICATION_ID")
             or _optional(source_env, "DISCORD_OAUTH_CLIENT_ID")
@@ -128,4 +131,7 @@ def load_settings(env: dict[str, str] | None = None) -> AppSettings:
         oauth_callback_url=_optional(source_env, "OAUTH_CALLBACK_URL"),
         oauth_client_ids=_load_oauth_values(source_env, "CLIENT_ID"),
         oauth_client_secrets=_load_oauth_values(source_env, "CLIENT_SECRET"),
+        product_manager_model=(
+            _optional(source_env, "PRODUCT_MANAGER_MODEL") or "openai:gpt-5.4"
+        ),
     )

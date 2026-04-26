@@ -4,13 +4,15 @@ pixie-for-pm is a Discord-triggered, LangGraph-orchestrated product collaboratio
 
 ## Agents
 
-The scaffold keeps five internal agent roles, each with a placeholder execution function:
+Pixie keeps five internal agent roles:
 
 - product manager
 - market analyst
 - user researcher
 - data scientist
 - product designer
+
+The product manager entrypoint now runs as a LangChain Deep Agents handler backed by an OpenAI chat model. The remaining internal roles still use placeholder handlers until their workflows are implemented.
 
 Discord exposes a single public bot identity. Users start work by mentioning the bot, replying to a prior bot message, or using a slash command. LangGraph can still hand work across internal agents, but those handoffs are not rendered as separate Discord personas or synthetic in-channel messages.
 
@@ -20,7 +22,7 @@ The package layout follows explicit boundaries:
 
 ```text
 pixie_for_pm/
-  agents/          # placeholder agent handlers and registry
+  agents/          # product manager deep agent, placeholder handlers, registry
   config/          # environment loading
   discord/         # routing, bot mention normalization, bot transport shell
   domain/          # typed workflow models shared across layers
@@ -128,7 +130,7 @@ The bot no longer relies on any configured Discord channel. It reacts only when 
 
 Create `web/.env` from `web/.env.example`. Leave `VITE_API_URL` empty to use the same origin as FastAPI, or set it explicitly only when the frontend should call a different API host.
 
-The bot entrypoint expects a populated `.env` file or equivalent environment variables. The current agent handlers are intentionally placeholder implementations and should be replaced with real prompts, tool calls, and handoff logic as the project grows.
+The bot entrypoint expects a populated `.env` file or equivalent environment variables. The product manager runtime also requires `OPENAI_API_KEY`, and uses `PRODUCT_MANAGER_MODEL` when set or `openai:gpt-5.4` by default.
 
 Connected integrations now initialize automatically from the stored server-scoped credentials. Pixie loads live hosted MCP tools for Notion, GitHub, Vercel, and PostHog at dispatch time, and uses direct API-backed tools for Airtable and Fireflies when no hosted MCP server is available. There is no extra `*_MCP_SERVER_*` enablement configuration.
 
@@ -154,7 +156,7 @@ This scaffold now covers the first integration-management slice:
 - Credentials are encrypted before storage and decrypted only on the internal server-to-server path.
 - The web frontend provides the initial settings UX for OAuth and API-key providers.
 - Connected provider tools now resolve automatically from hosted MCP servers or direct provider APIs using the stored connection credentials.
-- Agent handlers still use placeholder business logic, and live agent/tool usage should be verified in deployment.
+- The product manager path now runs through LangChain Deep Agents with an OpenAI model. The remaining internal roles still use placeholder business logic.
 - Each Discord-triggered turn now gets a typed integration tool bundle that can be passed directly to LangGraph agents as tools.
 
 See [specs/architecture.md](/home/yiouli/repo/pixie-for-pm/specs/architecture.md), [specs/integration-config.md](/home/yiouli/repo/pixie-for-pm/specs/integration-config.md), and [specs/agent-runtime-tooling.md](/home/yiouli/repo/pixie-for-pm/specs/agent-runtime-tooling.md) for the implementation outline and extension points.

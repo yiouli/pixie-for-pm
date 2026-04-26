@@ -11,10 +11,12 @@ requires-python = ">=3.11"
 dependencies = [
     "aiohttp>=3.11.18",
     "cryptography>=46.0.0",
+    "deepagents>=0.5.3",
     "discord.py>=2.5.2",
     "fastapi>=0.115.12",
     "httpx>=0.28.1",
     "langchain-mcp-adapters>=0.2.2",
+    "langchain-openai>=1.2.1",
     "langgraph>=0.4.7",
     "langgraph-checkpoint-sqlite>=2.0.6",
     "mcp>=1.27.0",

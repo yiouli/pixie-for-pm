@@ -13,7 +13,7 @@ The e2e flow verifies all of the following in one pass:
 - SQLite checkpoint persistence is created locally
 - the bot sends a response back to Discord
 
-The expected placeholder response always starts with `E2E_PLACEHOLDER_OK`.
+The expected product manager response always starts with `PM_AGENT_OK`.
 
 ## Prerequisites
 
@@ -94,8 +94,15 @@ Set at least these values:
 
 ```dotenv
 DISCORD_BOT_TOKEN=your-bot-token
+OPENAI_API_KEY=your-openai-api-key
 CONNECTION_STORE_SQLITE_PATH=.state/pixie-connection-store.sqlite
 LANGGRAPH_CHECKPOINT_PATH=.state/pixie-langgraph.sqlite
+```
+
+Optional:
+
+```dotenv
+PRODUCT_MANAGER_MODEL=openai:gpt-5.4
 ```
 
 For local runs without Supabase, `CONNECTION_STORE_SQLITE_PATH` is how the web app and the bot share claimed servers and credentials across the combined runtime or across separate processes.
@@ -136,13 +143,13 @@ Send:
 Expected result:
 
 - the bot replies in the same channel
-- the response starts with `E2E_PLACEHOLDER_OK`
+- the response starts with `PM_AGENT_OK`
 - the response mentions `product manager`
 
 Example shape:
 
 ```text
-E2E_PLACEHOLDER_OK [product manager] Discord -> LangGraph -> agent -> Discord loop is working. Original message: Can you help me test the Pixie bot?
+PM_AGENT_OK Product strategy memo: prioritize onboarding, activation, and weekly retained teams.
 ```
 
 ### Check B: Reply Routing
@@ -156,7 +163,7 @@ Can you continue that analysis?
 Expected result:
 
 - the bot replies once more in the same channel
-- the response starts with `E2E_PLACEHOLDER_OK`
+- the response starts with `PM_AGENT_OK`
 - the response stays on the single public bot surface instead of switching personas
 
 ### Check C: Thread Reply Routing
@@ -171,7 +178,7 @@ Can you continue in this thread?
 Expected result:
 
 - the bot responds inside the thread
-- the response starts with `E2E_PLACEHOLDER_OK`
+- the response starts with `PM_AGENT_OK`
 - the response comes from the same public bot identity
 
 ## 10. Verify Local Persistence

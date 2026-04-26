@@ -58,8 +58,7 @@ export function InstallPage() {
                 <p className="mt-3 text-sm leading-6 text-stone-700">
                   Mention the bot or reply to one of its messages and confirm
                   the bot replies with the{" "}
-                  <span className="font-semibold">E2E_PLACEHOLDER_OK</span>{" "}
-                  marker.
+                  <span className="font-semibold">PM_AGENT_OK</span> marker.
                 </p>
               </div>
             </div>

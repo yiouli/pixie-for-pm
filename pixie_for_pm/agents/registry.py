@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from collections.abc import Awaitable, Callable, Mapping
 
+from pixie_for_pm.agents.product_manager import build_product_manager_handler
 from pixie_for_pm.domain.models import (
     AgentExecution,
     AgentMessage,
@@ -47,3 +48,11 @@ def resolve_agent_handlers(
     if overrides is not None:
         handlers.update(overrides)
     return handlers
+
+
+__all__ = [
+    "AgentHandler",
+    "build_product_manager_handler",
+    "default_agent_handlers",
+    "resolve_agent_handlers",
+]
