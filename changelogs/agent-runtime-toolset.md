@@ -5,3 +5,5 @@
 - materialized connected provider catalogs as `langchain_core` tools in an `AgentToolset` that can be passed directly to LangGraph agents
 - kept live tool objects out of checkpoint state by building the workflow graph with per-dispatch runtime context
 - added regression tests for toolset initialization, tool invocation bookkeeping, and orchestrator context injection
+- replaced the local stdio MCP-server model with hosted remote MCP loading for Notion, GitHub, Vercel, and PostHog
+- added direct API-backed Airtable and Fireflies tools so all supported integrations can initialize without extra MCP enablement config

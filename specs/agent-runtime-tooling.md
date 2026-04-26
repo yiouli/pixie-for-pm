@@ -37,8 +37,9 @@ Before the first agent node runs, the orchestrator asks an `IntegrationToolsetIn
 1. load the claimed server row from the shared connection store
 2. list all active connections for that server
 3. decrypt credentials for each connected provider
-4. expand each provider into its full tool catalog
-5. bind each tool to an MCP invoker together with the provider credentials and trigger context
+4. load live hosted MCP tools for providers that expose remote MCP servers
+5. fall back to direct API-backed tools for providers without hosted MCP
+6. bind the resulting tool objects to the provider credentials and trigger context
 
 If the server has no connected integrations, the initializer returns an empty typed tool bundle.
 
@@ -70,39 +71,14 @@ class AgentToolset:
 
 This shape is directly consumable by LangGraph agents through `toolset.as_langgraph_tools()`.
 
-## Provider Tool Catalog
+## Provider Runtime Sources
 
-Each supported provider exposes a static catalog of MCP tool definitions:
+The runtime supports two provider categories:
 
-- Notion: `notion_search`, `notion_get_page`
-- GitHub: `github_search_issues`, `github_create_issue`
-- Vercel: `vercel_list_projects`, `vercel_get_deployment`
-- Airtable: `airtable_list_bases`, `airtable_query_records`
-- PostHog: `posthog_query_insights`, `posthog_get_feature_flag`
-- Fireflies: `fireflies_search_transcripts`, `fireflies_get_transcript`
+- Hosted MCP providers: Notion, GitHub, Vercel, and PostHog. Pixie opens remote streamable HTTP connections against the provider-hosted MCP endpoints and converts the live tool schemas into LangChain tools at dispatch time.
+- Direct API providers: Airtable and Fireflies. Pixie materializes typed `StructuredTool` wrappers around the provider APIs when no hosted MCP endpoint is available.
 
-Each definition includes:
-
-- provider ID
-- tool name
-- human-readable description
-- typed argument schema
-
-The initializer expands connected providers into actual `StructuredTool` instances from these definitions.
-
-## MCP Invocation Boundary
-
-Tool execution is routed through an `McpToolInvoker` protocol. Each tool wrapper supplies:
-
-- provider ID
-- tool name
-- validated arguments
-- decrypted credentials for that provider
-- Discord trigger context
-
-This keeps the runtime initialization slice strongly typed while leaving the actual MCP transport pluggable.
-
-The default production wiring should still initialize the full tool bundle even when the concrete MCP transport is replaced later.
+This keeps the runtime strongly typed while avoiding any local MCP server process management or extra environment configuration.
 
 ## Operational Rules
 
@@ -116,7 +92,7 @@ The default production wiring should still initialize the full tool bundle even 
 
 The implementation should introduce:
 
-- a typed integration runtime module for trigger context, tool catalogs, tool bundles, and initializer logic
+- a typed integration runtime module for trigger context, tool bundles, hosted MCP loading, and API-backed fallback providers
 - request-scoped orchestrator initialization before graph execution
 - `WorkflowContext` fields for trigger metadata and tool bundle access
 - Discord normalization updates so guild ID reaches the runtime

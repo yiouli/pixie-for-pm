@@ -1,10 +1,11 @@
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Literal, Protocol
 
 from langchain_core.tools import BaseTool, StructuredTool
-from pydantic import BaseModel, Field
+from pydantic import BaseModel
 
 from pixie_for_pm.config.settings import AppSettings
 from pixie_for_pm.integrations.registry import PROVIDERS
@@ -45,17 +46,13 @@ class AgentToolset:
         return self.tools
 
 
-@dataclass(frozen=True)
-class IntegrationToolCall:
-    provider_id: str
-    tool_name: str
-    arguments: dict[str, object]
-    credentials: dict[str, str]
-    trigger: DiscordTriggerContext
-
-
-class McpToolInvoker(Protocol):
-    async def invoke(self, call: IntegrationToolCall) -> object: ...
+class IntegrationRuntimeProvider(Protocol):
+    async def load_tools(
+        self,
+        *,
+        credentials: Mapping[str, str],
+        trigger: DiscordTriggerContext,
+    ) -> tuple[BaseTool, ...]: ...
 
 
 class ToolsetInitializer(Protocol):
@@ -68,169 +65,17 @@ class EmptyToolsetInitializer:
         return AgentToolset()
 
 
-class MissingMcpToolInvoker:
-    async def invoke(self, call: IntegrationToolCall) -> object:
-        raise RuntimeError(
-            "No MCP tool invoker is configured for "
-            f"{call.provider_id}.{call.tool_name}."
-        )
-
-
-class SearchInput(BaseModel):
-    query: str = Field(min_length=1)
-
-
-class PageLookupInput(BaseModel):
-    page_id: str = Field(min_length=1)
-
-
-class IssueSearchInput(BaseModel):
-    query: str = Field(min_length=1)
-
-
-class IssueCreateInput(BaseModel):
-    repository: str = Field(min_length=1)
-    title: str = Field(min_length=1)
-    body: str | None = None
-
-
-class ProjectListInput(BaseModel):
-    team_id: str | None = None
-
-
-class DeploymentLookupInput(BaseModel):
-    deployment_id: str = Field(min_length=1)
-
-
-class BaseListInput(BaseModel):
-    workspace_id: str | None = None
-
-
-class RecordQueryInput(BaseModel):
-    base_id: str = Field(min_length=1)
-    table_name: str = Field(min_length=1)
-    formula: str | None = None
-
-
-class InsightQueryInput(BaseModel):
-    query: str = Field(min_length=1)
-
-
-class FeatureFlagLookupInput(BaseModel):
-    key: str = Field(min_length=1)
-
-
-class TranscriptLookupInput(BaseModel):
-    transcript_id: str = Field(min_length=1)
-
-
-@dataclass(frozen=True)
-class ProviderToolDefinition:
-    provider_id: str
-    name: str
-    description: str
-    args_schema: type[BaseModel]
-
-
-PROVIDER_TOOL_CATALOG: dict[str, tuple[ProviderToolDefinition, ...]] = {
-    "airtable": (
-        ProviderToolDefinition(
-            provider_id="airtable",
-            name="airtable_list_bases",
-            description="List Airtable bases available to the connected workspace.",
-            args_schema=BaseListInput,
-        ),
-        ProviderToolDefinition(
-            provider_id="airtable",
-            name="airtable_query_records",
-            description="Query Airtable records from a specific base and table.",
-            args_schema=RecordQueryInput,
-        ),
-    ),
-    "fireflies": (
-        ProviderToolDefinition(
-            provider_id="fireflies",
-            name="fireflies_get_transcript",
-            description="Fetch a Fireflies transcript by transcript ID.",
-            args_schema=TranscriptLookupInput,
-        ),
-        ProviderToolDefinition(
-            provider_id="fireflies",
-            name="fireflies_search_transcripts",
-            description="Search Fireflies transcripts using a free-text query.",
-            args_schema=SearchInput,
-        ),
-    ),
-    "github": (
-        ProviderToolDefinition(
-            provider_id="github",
-            name="github_create_issue",
-            description="Create a GitHub issue in a connected repository.",
-            args_schema=IssueCreateInput,
-        ),
-        ProviderToolDefinition(
-            provider_id="github",
-            name="github_search_issues",
-            description="Search GitHub issues and pull requests with a query.",
-            args_schema=IssueSearchInput,
-        ),
-    ),
-    "notion": (
-        ProviderToolDefinition(
-            provider_id="notion",
-            name="notion_get_page",
-            description="Fetch a Notion page by page ID.",
-            args_schema=PageLookupInput,
-        ),
-        ProviderToolDefinition(
-            provider_id="notion",
-            name="notion_search",
-            description="Search connected Notion content with a free-text query.",
-            args_schema=SearchInput,
-        ),
-    ),
-    "posthog": (
-        ProviderToolDefinition(
-            provider_id="posthog",
-            name="posthog_get_feature_flag",
-            description="Fetch a PostHog feature flag definition by key.",
-            args_schema=FeatureFlagLookupInput,
-        ),
-        ProviderToolDefinition(
-            provider_id="posthog",
-            name="posthog_query_insights",
-            description="Query PostHog insights with a free-text analytics prompt.",
-            args_schema=InsightQueryInput,
-        ),
-    ),
-    "vercel": (
-        ProviderToolDefinition(
-            provider_id="vercel",
-            name="vercel_get_deployment",
-            description="Fetch deployment details for a Vercel deployment ID.",
-            args_schema=DeploymentLookupInput,
-        ),
-        ProviderToolDefinition(
-            provider_id="vercel",
-            name="vercel_list_projects",
-            description="List Vercel projects for the connected account or team.",
-            args_schema=ProjectListInput,
-        ),
-    ),
-}
-
-
 class IntegrationToolsetInitializer:
     def __init__(
         self,
         *,
         store: ConnectionStore,
         cipher: CredentialCipher,
-        invoker: McpToolInvoker,
+        providers: Mapping[str, IntegrationRuntimeProvider],
     ) -> None:
         self._store = store
         self._cipher = cipher
-        self._invoker = invoker
+        self._providers = dict(providers)
 
     async def initialize(self, trigger: DiscordTriggerContext) -> AgentToolset:
         server = await self._store.get_server_by_discord_id(trigger.discord_server_id)
@@ -246,24 +91,31 @@ class IntegrationToolsetInitializer:
                 continue
 
             provider = PROVIDERS.get(connection.provider)
-            tool_definitions = PROVIDER_TOOL_CATALOG.get(connection.provider)
-            if provider is None or tool_definitions is None:
+            runtime_provider = self._providers.get(connection.provider)
+            if provider is None or runtime_provider is None:
                 continue
 
             credentials = self._cipher.decrypt_credentials(
                 connection.credentials_encrypted
             )
-            provider_tools = tuple(
-                self._build_tool(
-                    definition=definition,
+            try:
+                provider_tools = await runtime_provider.load_tools(
                     credentials=credentials,
                     trigger=trigger,
+                )
+            except Exception:
+                continue
+
+            wrapped_tools = tuple(
+                self._wrap_tool(
+                    tool=tool,
+                    provider_id=connection.provider,
                     server_id=server.id,
                 )
-                for definition in tool_definitions
+                for tool in provider_tools
             )
 
-            tools.extend(provider_tools)
+            tools.extend(wrapped_tools)
             integrations.append(
                 ConnectedIntegration(
                     provider_id=provider.id,
@@ -271,55 +123,65 @@ class IntegrationToolsetInitializer:
                     auth_type=provider.auth_type,
                     status=connection.status,
                     scopes=tuple(connection.scopes or ()),
-                    tool_names=tuple(
-                        definition.name for definition in tool_definitions
-                    ),
+                    tool_names=tuple(tool.name for tool in wrapped_tools),
                 )
             )
 
         return AgentToolset(tools=tuple(tools), integrations=tuple(integrations))
 
-    def _build_tool(
+    def _wrap_tool(
         self,
         *,
-        definition: ProviderToolDefinition,
-        credentials: dict[str, str],
-        trigger: DiscordTriggerContext,
+        tool: BaseTool,
+        provider_id: str,
         server_id: str,
     ) -> BaseTool:
         async def _invoke_tool(**kwargs: object) -> object:
-            result = await self._invoker.invoke(
-                IntegrationToolCall(
-                    provider_id=definition.provider_id,
-                    tool_name=definition.name,
-                    arguments=dict(kwargs),
-                    credentials=credentials,
-                    trigger=trigger,
-                )
-            )
-            await self._store.touch_connection_last_used(
-                server_id, definition.provider_id
-            )
+            result = await tool.ainvoke(kwargs)
+            await self._store.touch_connection_last_used(server_id, provider_id)
             return result
 
-        return StructuredTool.from_function(
-            coroutine=_invoke_tool,
-            name=definition.name,
-            description=definition.description,
-            args_schema=definition.args_schema,
+        response_format: Literal["content", "content_and_artifact"] = getattr(
+            tool, "response_format", "content"
         )
+        if response_format not in {"content", "content_and_artifact"}:
+            response_format = "content"
+
+        return StructuredTool(
+            name=tool.name,
+            description=tool.description,
+            args_schema=_tool_args_schema(tool),
+            response_format=response_format,
+            metadata=tool.metadata,
+            tags=tool.tags,
+            return_direct=tool.return_direct,
+            coroutine=_invoke_tool,
+        )
+
+
+def _tool_args_schema(tool: BaseTool) -> type[BaseModel] | dict[str, object]:
+    if tool.args_schema is None:
+        return {"type": "object", "properties": {}}
+    return tool.args_schema
 
 
 def build_toolset_initializer(
     settings: AppSettings,
     *,
-    invoker: McpToolInvoker | None = None,
+    providers: Mapping[str, IntegrationRuntimeProvider] | None = None,
 ) -> ToolsetInitializer:
     if settings.credentials_encryption_key is None:
         return EmptyToolsetInitializer()
 
+    if providers is None:
+        from pixie_for_pm.integrations.runtime_providers import (
+            build_runtime_providers,
+        )
+
+        providers = build_runtime_providers()
+
     return IntegrationToolsetInitializer(
         store=build_connection_store(settings),
         cipher=CredentialCipher(settings.credentials_encryption_key),
-        invoker=invoker or MissingMcpToolInvoker(),
+        providers=providers,
     )

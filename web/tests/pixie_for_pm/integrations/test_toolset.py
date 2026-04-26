@@ -1,11 +1,13 @@
+from collections.abc import Mapping
+
 import pytest
+from langchain_core.tools import BaseTool, StructuredTool
 
 from pixie_for_pm.integrations.toolset import (
     AgentToolset,
     DiscordTriggerContext,
-    IntegrationToolCall,
+    IntegrationRuntimeProvider,
     IntegrationToolsetInitializer,
-    McpToolInvoker,
 )
 from pixie_for_pm.web.encryption import CredentialCipher
 from pixie_for_pm.web.store import InMemoryConnectionStore
@@ -13,13 +15,55 @@ from pixie_for_pm.web.store import InMemoryConnectionStore
 _FERNET_KEY = "j0aN3s-cLScfv0GfNyG8t0UyONn7y8u2s6o6cLs1hYw="
 
 
-class _RecordingInvoker(McpToolInvoker):
+class _RecordingProvider(IntegrationRuntimeProvider):
     def __init__(self) -> None:
-        self.calls: list[IntegrationToolCall] = []
+        self.calls: list[tuple[dict[str, str], DiscordTriggerContext]] = []
+        self.invocations: list[dict[str, object]] = []
 
-    async def invoke(self, call: IntegrationToolCall) -> str:
-        self.calls.append(call)
-        return f"ok:{call.provider_id}:{call.tool_name}"
+    async def load_tools(
+        self,
+        *,
+        credentials: Mapping[str, str],
+        trigger: DiscordTriggerContext,
+    ) -> tuple[BaseTool, ...]:
+        self.calls.append((dict(credentials), trigger))
+
+        async def _get_transcript(transcript_id: str) -> str:
+            self.invocations.append({"transcript_id": transcript_id})
+            return (
+                f"ok:{credentials.get('api_key', 'missing')}:fireflies_get_transcript"
+            )
+
+        async def _search(query: str) -> str:
+            self.invocations.append({"query": query})
+            return f"ok:{credentials.get('access_token', 'missing')}:notion_search"
+
+        if "api_key" in credentials:
+            return (
+                StructuredTool.from_function(
+                    coroutine=_get_transcript,
+                    name="fireflies_get_transcript",
+                    description="Fetch a Fireflies transcript.",
+                ),
+                StructuredTool.from_function(
+                    coroutine=_search,
+                    name="fireflies_search_transcripts",
+                    description="Search Fireflies transcripts.",
+                ),
+            )
+
+        return (
+            StructuredTool.from_function(
+                coroutine=_get_transcript,
+                name="notion_get_page",
+                description="Fetch a Notion page.",
+            ),
+            StructuredTool.from_function(
+                coroutine=_search,
+                name="notion_search",
+                description="Search Notion.",
+            ),
+        )
 
 
 @pytest.mark.asyncio
@@ -28,7 +72,8 @@ async def test_initializer_builds_langgraph_tools_for_all_connected_integrations
 ):
     store = InMemoryConnectionStore()
     cipher = CredentialCipher(_FERNET_KEY)
-    invoker = _RecordingInvoker()
+    notion_provider = _RecordingProvider()
+    fireflies_provider = _RecordingProvider()
 
     server, _ = await store.claim_server("guild-123", "user-1", name="Pixie Guild")
     await store.upsert_connection(
@@ -49,7 +94,10 @@ async def test_initializer_builds_langgraph_tools_for_all_connected_integrations
     initializer = IntegrationToolsetInitializer(
         store=store,
         cipher=cipher,
-        invoker=invoker,
+        providers={
+            "notion": notion_provider,
+            "fireflies": fireflies_provider,
+        },
     )
 
     toolset = await initializer.initialize(
@@ -75,6 +123,8 @@ async def test_initializer_builds_langgraph_tools_for_all_connected_integrations
         "notion_get_page",
         "notion_search",
     ]
+    assert fireflies_provider.calls[0][0] == {"api_key": "fireflies-token"}
+    assert notion_provider.calls[0][0] == {"access_token": "notion-token"}
 
 
 @pytest.mark.asyncio
@@ -83,7 +133,7 @@ async def test_initialized_tool_invocation_passes_credentials_and_updates_last_u
 ):
     store = InMemoryConnectionStore()
     cipher = CredentialCipher(_FERNET_KEY)
-    invoker = _RecordingInvoker()
+    notion_provider = _RecordingProvider()
 
     server, _ = await store.claim_server("guild-456", "user-2")
     await store.upsert_connection(
@@ -97,7 +147,7 @@ async def test_initialized_tool_invocation_passes_credentials_and_updates_last_u
     initializer = IntegrationToolsetInitializer(
         store=store,
         cipher=cipher,
-        invoker=invoker,
+        providers={"notion": notion_provider},
     )
     toolset = await initializer.initialize(
         DiscordTriggerContext(
@@ -114,12 +164,10 @@ async def test_initialized_tool_invocation_passes_credentials_and_updates_last_u
     result = await toolset.tools[1].ainvoke({"query": "roadmap"})
     connection = await store.get_connection(server.id, "notion")
 
-    assert result == "ok:notion:notion_search"
-    assert len(invoker.calls) == 1
-    assert invoker.calls[0].provider_id == "notion"
-    assert invoker.calls[0].tool_name == "notion_search"
-    assert invoker.calls[0].credentials == {"access_token": "notion-token"}
-    assert invoker.calls[0].arguments == {"query": "roadmap"}
-    assert invoker.calls[0].trigger.discord_server_id == "guild-456"
+    assert result == "ok:notion-token:notion_search"
+    assert len(notion_provider.calls) == 1
+    assert notion_provider.calls[0][0] == {"access_token": "notion-token"}
+    assert notion_provider.calls[0][1].discord_server_id == "guild-456"
+    assert notion_provider.invocations == [{"query": "roadmap"}]
     assert connection is not None
     assert connection.last_used_at is not None

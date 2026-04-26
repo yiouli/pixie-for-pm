@@ -78,7 +78,7 @@ Outbound publication:
 ## Extension Points
 
 - Replace placeholder handlers in `pixie_for_pm/agents/registry.py` with real agent implementations.
-- Replace the default MCP invoker with provider-specific transport adapters under `pixie_for_pm/integrations/` while keeping the typed toolset initializer stable.
+- Extend the hosted-MCP and API-backed provider runtime layer under `pixie_for_pm/integrations/` while keeping the typed toolset initializer stable.
 - Extend the FastAPI settings layer with live Supabase-backed persistence, token refresh, and provider-specific validation hardening.
 - Enrich the Discord adapter with thread ownership and richer error translation.
 - Swap SQLite persistence for another LangGraph-supported checkpoint backend when deployment requirements change.

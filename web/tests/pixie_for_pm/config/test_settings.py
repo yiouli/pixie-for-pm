@@ -71,6 +71,16 @@ def test_load_settings_supports_web_server_configuration() -> None:
     assert settings.oauth_client_secrets["airtable"] == "airtable-secret"
 
 
+def test_load_settings_does_not_require_provider_mcp_server_configuration() -> None:
+    settings = load_settings(
+        {
+            "DISCORD_BOT_TOKEN": "discord-token",
+        }
+    )
+
+    assert not hasattr(settings, "mcp_server_configs")
+
+
 def test_load_settings_falls_back_to_discord_oauth_client_id_for_install_app_id() -> (
     None
 ):

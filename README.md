@@ -130,6 +130,8 @@ Create `web/.env` from `web/.env.example`. Leave `VITE_API_URL` empty to use the
 
 The bot entrypoint expects a populated `.env` file or equivalent environment variables. The current agent handlers are intentionally placeholder implementations and should be replaced with real prompts, tool calls, and handoff logic as the project grows.
 
+Connected integrations now initialize automatically from the stored server-scoped credentials. Pixie loads live hosted MCP tools for Notion, GitHub, Vercel, and PostHog at dispatch time, and uses direct API-backed tools for Airtable and Fireflies when no hosted MCP server is available. There is no extra `*_MCP_SERVER_*` enablement configuration.
+
 The settings API expects session and encryption keys plus OAuth client credentials. Supabase remains optional; when it is not configured, both the web app and bot default to the shared local SQLite store at `CONNECTION_STORE_SQLITE_PATH` so local end-to-end flows work across a single combined process or separate processes.
 
 For Vercel, deploy the ASGI app exposed at `api/index.py`. That deployment surface serves FastAPI and the built SPA, but it intentionally does not start the long-lived Discord gateway client.
@@ -151,7 +153,8 @@ This scaffold now covers the first integration-management slice:
 - FastAPI exposes the bot install page/redirect, settings, claim, connection, OAuth callback, and internal credential routes.
 - Credentials are encrypted before storage and decrypted only on the internal server-to-server path.
 - The web frontend provides the initial settings UX for OAuth and API-key providers.
-- Agent handlers still use placeholder business logic, and live storage/provider wiring should be verified in deployment.
+- Connected provider tools now resolve automatically from hosted MCP servers or direct provider APIs using the stored connection credentials.
+- Agent handlers still use placeholder business logic, and live agent/tool usage should be verified in deployment.
 - Each Discord-triggered turn now gets a typed integration tool bundle that can be passed directly to LangGraph agents as tools.
 
 See [specs/architecture.md](/home/yiouli/repo/pixie-for-pm/specs/architecture.md), [specs/integration-config.md](/home/yiouli/repo/pixie-for-pm/specs/integration-config.md), and [specs/agent-runtime-tooling.md](/home/yiouli/repo/pixie-for-pm/specs/agent-runtime-tooling.md) for the implementation outline and extension points.
