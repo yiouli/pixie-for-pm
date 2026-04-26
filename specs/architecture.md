@@ -2,13 +2,15 @@
 
 ## Goal
 
-The scaffold establishes a Discord-first orchestration surface for a product collaboration system with five agent roles:
+The scaffold establishes two coordinated surfaces for a product collaboration system with five agent roles:
 
 - product manager
 - market analyst
 - user researcher
 - data scientist
 - product designer
+
+The first surface is the existing Discord orchestration loop. The second surface is a settings system that lets each Discord server owner connect external systems for the agents. The settings SPA is built by Vite into `web/dist` and then served by the FastAPI process.
 
 ## Primary Flow
 
@@ -23,6 +25,25 @@ The scaffold establishes a Discord-first orchestration surface for a product col
 6. The selected placeholder agent executes.
 7. If the execution returns handoffs, the graph emits a synthetic handoff message and routes to the next agent.
 8. The current turn’s messages are returned to the Discord transport for publication.
+
+## Integration Settings Flow
+
+1. A user runs `/settings` in the configured guild.
+2. The bot replies with an ephemeral link to the web app, preserving the Discord server ID.
+3. FastAPI serves the built SPA bundle for that link, and the browser loads the settings UI from the same origin as the API.
+4. The user opens the link and, if not already logged in, is redirected to Discord OAuth
+   (`GET /api/auth/discord`).
+5. Discord redirects to `GET /api/auth/discord/callback`. The server exchanges the code for
+   a Discord access token, fetches the Discord user identity from `/users/@me`, and issues
+   a signed Fernet-encrypted `session` HttpOnly cookie.
+6. The browser is redirected back to the web app with the session cookie set.
+7. The web app calls `POST /api/servers/{discord_server_id}/claim` to record ownership.
+8. The FastAPI API validates ownership on every subsequent settings mutation.
+9. OAuth and API-key provider credentials are stored as Fernet-encrypted per-server
+   connection records in the connection store (Supabase in production, in-memory in tests).
+10. The Discord bot's agent runtime accesses decrypted credentials **directly in Python**
+    via `pixie_for_pm.integrations.credentials.get_credentials(discord_server_id, provider,
+store=store, cipher=cipher)` — no HTTP bridge is needed.
 
 ## State Model
 
@@ -52,6 +73,7 @@ Outbound publication:
 ## Extension Points
 
 - Replace placeholder handlers in `pixie_for_pm/agents/registry.py` with real agent implementations.
-- Add MCP-backed adapters under `pixie_for_pm/integrations/`.
-- Enrich the Discord adapter with thread ownership, slash commands, and richer error translation.
+- Add richer MCP-backed adapters under `pixie_for_pm/integrations/` on top of the shared credential accessor.
+- Extend the FastAPI settings layer with live Supabase-backed persistence, token refresh, and provider-specific validation hardening.
+- Enrich the Discord adapter with thread ownership and richer error translation.
 - Swap SQLite persistence for another LangGraph-supported checkpoint backend when deployment requirements change.

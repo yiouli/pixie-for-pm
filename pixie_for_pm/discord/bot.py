@@ -2,8 +2,10 @@ from __future__ import annotations
 
 import aiohttp
 import discord
+from discord import app_commands
 
-from pixie_for_pm.config.settings import AppSettings
+from pixie_for_pm.config.settings import AppSettings, load_settings
+from pixie_for_pm.discord.commands.settings import install_settings_command
 from pixie_for_pm.discord.normalization import (
     detect_mentioned_agents,
     detect_reply_agent,
@@ -21,10 +23,13 @@ class PixieDiscordBot(discord.Client):
         self._settings = settings
         self._orchestrator = PixieOrchestrator(settings.langgraph_checkpoint_path)
         self._webhook_session: aiohttp.ClientSession | None = None
+        self.tree = app_commands.CommandTree(self)
+        install_settings_command(self.tree, settings)
 
     async def setup_hook(self) -> None:
         self._webhook_session = aiohttp.ClientSession()
         await self._orchestrator.__aenter__()
+        await self.tree.sync(guild=discord.Object(id=self._settings.discord_guild_id))
 
     async def close(self) -> None:
         await self._orchestrator.__aexit__(None, None, None)
@@ -112,3 +117,9 @@ class PixieDiscordBot(discord.Client):
                 "Configured Discord channel does not support sending messages."
             )
         await channel_send(f"**{persona.display_name}:** {agent_message.content}")
+
+
+def main() -> None:
+    settings = load_settings()
+    bot = PixieDiscordBot(settings)
+    bot.run(settings.discord_bot_token)

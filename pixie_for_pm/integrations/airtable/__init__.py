@@ -1,4 +1,4 @@
-"""PostHog credential access helpers."""
+"""Airtable credential access helpers."""
 
 from __future__ import annotations
 
@@ -11,13 +11,13 @@ if TYPE_CHECKING:
     from pixie_for_pm.web.store import ConnectionStore
 
 
-async def get_posthog_credentials(
+async def get_airtable_credentials(
     discord_server_id: str,
     *,
     store: ConnectionStore,
     cipher: CredentialCipher,
 ) -> dict[str, str] | None:
-    """Return decrypted PostHog API key credentials for *discord_server_id*, or ``None``."""
+    """Return decrypted Airtable OAuth credentials for *discord_server_id*, or ``None``."""
     return await get_credentials(
-        discord_server_id, "posthog", store=store, cipher=cipher
+        discord_server_id, "airtable", store=store, cipher=cipher
     )

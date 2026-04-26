@@ -21,6 +21,22 @@ class AppSettings:
     discord_guild_id: int
     discord_orchestration_channel_id: int
     langgraph_checkpoint_path: Path
+    web_app_url: str | None
+    # Discord OAuth login (used by the settings web app's login flow)
+    discord_oauth_client_id: str | None
+    discord_oauth_client_secret: str | None
+    discord_oauth_callback_url: str | None
+    # Session cookie signing key (Fernet key, see web/session.py)
+    session_secret_key: str | None
+    # Supabase connection (optional; used by SupabaseConnectionStore)
+    supabase_url: str | None
+    supabase_service_role_key: str | None
+    # Credential storage encryption key (Fernet key)
+    credentials_encryption_key: str | None
+    # Integration provider OAuth credentials
+    oauth_callback_url: str | None
+    oauth_client_ids: dict[str, str]
+    oauth_client_secrets: dict[str, str]
     personas: dict[AgentRole, AgentPersonaConfig]
 
 
@@ -45,6 +61,31 @@ DEFAULT_PERSONAS: Final[dict[AgentRole, tuple[str, tuple[str, ...]]]] = {
 }
 
 
+def _parse_dotenv_value(raw_value: str) -> str:
+    value = raw_value.strip()
+    if len(value) >= 2 and value[0] == value[-1] and value[0] in {'"', "'"}:
+        return value[1:-1]
+    return value
+
+
+def _load_local_dotenv() -> dict[str, str]:
+    dotenv_path = Path.cwd() / ".env"
+    if not dotenv_path.is_file():
+        return {}
+
+    values: dict[str, str] = {}
+    for raw_line in dotenv_path.read_text(encoding="utf-8").splitlines():
+        line = raw_line.strip()
+        if line == "" or line.startswith("#") or "=" not in line:
+            continue
+        key, raw_value = line.split("=", 1)
+        key = key.strip()
+        if key == "":
+            continue
+        values[key] = _parse_dotenv_value(raw_value)
+    return values
+
+
 def _require(env: dict[str, str], key: str) -> str:
     value = env.get(key)
     if value is None or value.strip() == "":
@@ -57,6 +98,24 @@ def _parse_tokens(raw_value: str) -> tuple[str, ...]:
     if not tokens:
         raise ValueError("Mention token configuration must include at least one token.")
     return tokens
+
+
+def _optional(env: dict[str, str], key: str) -> str | None:
+    value = env.get(key)
+    if value is None:
+        return None
+    stripped = value.strip()
+    return stripped or None
+
+
+def _load_oauth_values(env: dict[str, str], suffix: str) -> dict[str, str]:
+    providers = ("NOTION", "GITHUB", "VERCEL", "AIRTABLE")
+    values: dict[str, str] = {}
+    for provider in providers:
+        value = _optional(env, f"{provider}_{suffix}")
+        if value is not None:
+            values[provider.lower()] = value
+    return values
 
 
 def _load_persona(env: dict[str, str], role: AgentRole) -> AgentPersonaConfig:
@@ -75,7 +134,11 @@ def _load_persona(env: dict[str, str], role: AgentRole) -> AgentPersonaConfig:
 
 
 def load_settings(env: dict[str, str] | None = None) -> AppSettings:
-    source_env = dict(os.environ if env is None else env)
+    if env is None:
+        source_env = dict(os.environ)
+        source_env.update(_load_local_dotenv())
+    else:
+        source_env = dict(env)
     personas = {role: _load_persona(source_env, role) for role in AgentRole}
     return AppSettings(
         discord_bot_token=_require(source_env, "DISCORD_BOT_TOKEN"),
@@ -86,5 +149,18 @@ def load_settings(env: dict[str, str] | None = None) -> AppSettings:
         langgraph_checkpoint_path=Path(
             source_env.get("LANGGRAPH_CHECKPOINT_PATH", ".state/pixie-langgraph.sqlite")
         ),
+        web_app_url=_optional(source_env, "WEB_APP_URL"),
+        discord_oauth_client_id=_optional(source_env, "DISCORD_OAUTH_CLIENT_ID"),
+        discord_oauth_client_secret=_optional(
+            source_env, "DISCORD_OAUTH_CLIENT_SECRET"
+        ),
+        discord_oauth_callback_url=_optional(source_env, "DISCORD_OAUTH_CALLBACK_URL"),
+        session_secret_key=_optional(source_env, "SESSION_SECRET_KEY"),
+        supabase_url=_optional(source_env, "SUPABASE_URL"),
+        supabase_service_role_key=_optional(source_env, "SUPABASE_SERVICE_ROLE_KEY"),
+        credentials_encryption_key=_optional(source_env, "CREDENTIALS_ENCRYPTION_KEY"),
+        oauth_callback_url=_optional(source_env, "OAUTH_CALLBACK_URL"),
+        oauth_client_ids=_load_oauth_values(source_env, "CLIENT_ID"),
+        oauth_client_secrets=_load_oauth_values(source_env, "CLIENT_SECRET"),
         personas=personas,
     )
