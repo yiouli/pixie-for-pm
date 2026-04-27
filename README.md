@@ -14,7 +14,7 @@ Pixie keeps five internal agent roles:
 
 The product manager entrypoint now runs as a LangChain Deep Agents handler backed by an OpenAI chat model. The remaining internal roles still use placeholder handlers until their workflows are implemented.
 
-Discord exposes a single public bot identity. Users start work by mentioning the bot, replying to a prior bot message, or using a slash command. LangGraph can still hand work across internal agents, but those handoffs are not rendered as separate Discord personas or synthetic in-channel messages.
+Discord exposes a single public bot identity. Users start work by mentioning the bot or replying to a prior bot message. LangGraph can still hand work across internal agents, but those handoffs are not rendered as separate Discord personas or synthetic in-channel messages.
 
 ## Architecture
 
@@ -48,13 +48,14 @@ changelogs/
 
 The runtime flow is:
 
-1. Discord receives a message that explicitly addresses the bot through a bot mention or a reply to a prior bot message.
-2. The Discord adapter normalizes message content into a typed dispatch request.
-3. Routing enters the product manager entrypoint while preserving whether the trigger was a direct mention or a reply.
+1. Discord receives a message trigger through a direct mention or reply to a prior bot message.
+2. The Discord adapter normalizes the trigger into a typed dispatch request.
+3. Routing enters the product manager entrypoint while preserving whether the trigger came from a direct mention or reply.
 4. The orchestrator resolves the guild-scoped integration connections, expands them into a typed LangGraph tool bundle for the turn, and keeps those live tool objects out of checkpoint state.
 5. LangGraph invokes the internal agents it needs and persists checkpoint state to SQLite.
 6. Internal handoffs stay inside the orchestration graph instead of being emitted as Discord messages.
-7. The Discord adapter publishes a single bot reply for the turn. Slash-command follow-up state is delivered through deferred interaction responses.
+7. The Discord adapter reacts with `:eyes:`, uses an editable placeholder reply for visible progress states such as `Thinking` and tool fetches, keeps Discord's native typing indicator active while the turn runs, and replaces the placeholder with either the final public response or an explicit error state.
+8. Slash-command interaction responses remain limited to `/settings` and other configuration flows.
 
 The Discord install flow is:
 
@@ -81,8 +82,11 @@ LangGraph persistence is enabled through `AsyncSqliteSaver`. The checkpoint data
 
 Pixie uses one installed Discord bot identity for all public communication.
 
-- inbound triggers are direct bot mentions, replies to prior bot-authored messages, and slash commands
+- inbound triggers are direct bot mentions and replies to prior bot-authored messages
 - internal LangGraph handoffs remain private to the orchestration layer
+- mention- and reply-triggered turns acknowledge receipt immediately with an `:eyes:` reaction and an editable progress reply while LangGraph runs
+- plain follow-up messages inside a thread continue the conversation once the bot has already participated in that thread
+- startup clears stale global slash commands before syncing guild copies so Discord does not show duplicate entries
 - slash-command status updates should use deferred interaction replies and edits instead of agent-to-agent Discord messages
 
 ## Local Setup

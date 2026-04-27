@@ -15,8 +15,8 @@ The first surface is a single public Discord bot. The second surface is a settin
 ## Primary Flow
 
 1. A user explicitly addresses the bot in a guild message by mentioning the bot account or replying to a prior bot message.
-2. The Discord adapter normalizes the incoming message into a typed `IncomingDiscordMessage`.
-3. Routing converts the message into a `DispatchRequest` that enters the product manager entrypoint.
+2. The Discord adapter normalizes the trigger into a typed `IncomingDiscordMessage` plus routing reason metadata.
+3. Routing converts the trigger into a `DispatchRequest` that enters the product manager entrypoint.
 4. The orchestrator derives a typed Discord trigger context, resolves the guild's active integrations, and expands them into a request-scoped tool bundle built from `langchain_core` tools.
 5. The LangGraph runtime loads or creates thread state using the configured SQLite checkpoint store.
 6. The selected agent executes with access to the typed trigger context and initialized tool bundle.

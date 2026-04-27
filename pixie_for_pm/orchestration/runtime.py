@@ -8,7 +8,13 @@ from types import TracebackType
 from langgraph.checkpoint.sqlite.aio import AsyncSqliteSaver
 
 from pixie_for_pm.agents.registry import AgentHandler, resolve_agent_handlers
-from pixie_for_pm.domain.models import AgentRole, DispatchRequest, OrchestrationResult
+from pixie_for_pm.domain.models import (
+    AgentRole,
+    DispatchRequest,
+    OrchestrationResult,
+    StatusEmitter,
+    emit_status_update,
+)
 from pixie_for_pm.integrations.toolset import (
     DiscordTriggerContext,
     EmptyToolsetInitializer,
@@ -57,26 +63,36 @@ class PixieOrchestrator:
         if checkpointer_context is not None:
             await checkpointer_context.__aexit__(exc_type, exc, tb)
 
-    async def dispatch(self, request: DispatchRequest) -> OrchestrationResult:
+    async def dispatch(
+        self,
+        request: DispatchRequest,
+        *,
+        status_emitter: StatusEmitter | None = None,
+    ) -> OrchestrationResult:
         if self._checkpointer is None:
             raise RuntimeError(
                 "PixieOrchestrator must be entered before dispatching work."
             )
 
         trigger = DiscordTriggerContext(
-            discord_server_id=request.message.discord_server_id,
-            discord_user_id=str(request.message.author_id),
-            channel_id=request.message.channel_id,
-            thread_id=request.message.thread_id,
-            message_id=request.message.discord_message_id,
-            thread_key=request.thread_key,
-            dispatch_reason=request.reason,
+            request.message.discord_server_id,
+            str(request.message.author_id),
+            request.message.channel_id,
+            request.message.thread_id,
+            request.message.discord_message_id,
+            request.thread_key,
+            request.reason,
         )
-        toolset = await self._toolset_initializer.initialize(trigger)
+        await emit_status_update(status_emitter, "Checking connected tools...")
+        toolset = await self._toolset_initializer.initialize(
+            trigger,
+            status_emitter=status_emitter,
+        )
         graph: AsyncWorkflowGraph = build_workflow_graph(
             handlers=self._handlers,
             checkpointer=self._checkpointer,
             trigger=trigger,
+            status_emitter=status_emitter,
             toolset=toolset,
         )
         state = build_initial_state(request)

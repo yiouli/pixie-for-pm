@@ -14,7 +14,9 @@ from pixie_for_pm.domain.models import (
     AgentMessage,
     AgentRole,
     DispatchRequest,
+    StatusEmitter,
     WorkflowContext,
+    emit_status_update,
 )
 from pixie_for_pm.integrations.toolset import AgentToolset, DiscordTriggerContext
 
@@ -101,15 +103,17 @@ def _to_context(
     role: AgentRole,
     *,
     trigger: DiscordTriggerContext,
+    status_emitter: StatusEmitter | None,
     toolset: AgentToolset,
 ) -> WorkflowContext:
     return WorkflowContext(
-        thread_key=state["thread_key"],
-        current_agent=role,
-        user_message=state["user_message"],
-        transcript=tuple(deserialize_transcript(state["transcript"])),
-        trigger=trigger,
-        toolset=toolset,
+        state["thread_key"],
+        role,
+        state["user_message"],
+        tuple(deserialize_transcript(state["transcript"])),
+        trigger,
+        toolset,
+        status_emitter,
     )
 
 
@@ -118,11 +122,22 @@ def _agent_node(
     handlers: Mapping[AgentRole, AgentHandler],
     *,
     trigger: DiscordTriggerContext,
+    status_emitter: StatusEmitter | None,
     toolset: AgentToolset,
 ) -> AgentNode:
     async def _run_agent(state: WorkflowState) -> dict[str, object]:
+        await emit_status_update(
+            status_emitter,
+            f"Analyzing with {role.label}...",
+        )
         execution: AgentExecution = await handlers[role](
-            _to_context(state=state, role=role, trigger=trigger, toolset=toolset)
+            _to_context(
+                state=state,
+                role=role,
+                trigger=trigger,
+                status_emitter=status_emitter,
+                toolset=toolset,
+            )
         )
         serialized_messages = _serialize_messages(execution.messages)
         return {
@@ -164,13 +179,25 @@ def _dispatch_node(state: WorkflowState) -> dict[str, object]:
 
 
 async def _handoff_node(state: WorkflowState) -> dict[str, object]:
-    next_handoff = state["pending_handoffs"][0]
-    target_agent = AgentRole(next_handoff["target_agent"])
-    remaining_handoffs = state["pending_handoffs"][1:]
     return {
-        "current_agent": target_agent.value,
-        "pending_handoffs": remaining_handoffs,
+        "current_agent": AgentRole(state["pending_handoffs"][0]["target_agent"]).value,
+        "pending_handoffs": state["pending_handoffs"][1:],
     }
+
+
+def _build_handoff_node(
+    status_emitter: StatusEmitter | None,
+) -> AgentNode:
+    async def _run_handoff(state: WorkflowState) -> dict[str, object]:
+        next_handoff = state["pending_handoffs"][0]
+        target_agent = AgentRole(next_handoff["target_agent"])
+        await emit_status_update(
+            status_emitter,
+            f"Handing off to {target_agent.label}...",
+        )
+        return await _handoff_node(state)
+
+    return _run_handoff
 
 
 def build_workflow_graph(
@@ -178,11 +205,12 @@ def build_workflow_graph(
     checkpointer: AsyncSqliteSaver,
     *,
     trigger: DiscordTriggerContext,
+    status_emitter: StatusEmitter | None = None,
     toolset: AgentToolset,
 ) -> AsyncWorkflowGraph:
     builder = StateGraph(WorkflowState)
     builder.add_node("dispatch", _dispatch_node)
-    builder.add_node("handoff", _handoff_node)
+    builder.add_node("handoff", cast(Any, _build_handoff_node(status_emitter)))
 
     for role in AgentRole:
         builder.add_node(
@@ -193,6 +221,7 @@ def build_workflow_graph(
                     role=role,
                     handlers=handlers,
                     trigger=trigger,
+                    status_emitter=status_emitter,
                     toolset=toolset,
                 ),
             ),

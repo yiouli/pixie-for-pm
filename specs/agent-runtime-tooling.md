@@ -2,7 +2,7 @@
 
 ## Goal
 
-When a Discord message triggers the runtime, Pixie must resolve every integration already connected for that Discord server, materialize the corresponding MCP-backed tools in a strongly typed bundle, and pass that bundle into the agent runtime for the current turn.
+When a Discord message trigger reaches the runtime, Pixie must resolve every integration already connected for that Discord server, materialize the corresponding MCP-backed tools in a strongly typed bundle, and pass that bundle into the agent runtime for the current turn.
 
 The runtime contract must satisfy three constraints:
 
@@ -42,6 +42,17 @@ Before the first agent node runs, the orchestrator asks an `IntegrationToolsetIn
 6. bind the resulting tool objects to the provider credentials and trigger context
 
 If the server has no connected integrations, the initializer returns an empty typed tool bundle.
+
+### 2a. Emit runtime progress for the Discord surface
+
+The message-triggered Discord surface should not stay silent while the runtime works. The orchestrator therefore accepts an optional status emitter that can be called at request-scoped milestones:
+
+- before connected tools are resolved
+- when an agent node starts running
+- when a handoff changes the current internal agent
+- immediately before and after a wrapped provider tool invocation
+
+Discord can map these emitted states onto editable placeholder replies plus channel typing indicators, without leaking internal checkpoint state into the graph.
 
 ### 3. Bind the toolset into the current turn
 
@@ -86,7 +97,17 @@ This keeps the runtime strongly typed while avoiding any local MCP server proces
 - Unknown providers are skipped rather than crashing the Discord turn.
 - Tool names are deterministic and stable across runs.
 - A successful tool invocation updates `last_used_at` for the underlying connection.
+- Runtime progress updates should be best-effort UX signals; losing a status update must not fail the underlying Discord turn.
 - Placeholder agent handlers can ignore the tool bundle, but real LangGraph agents can pass `toolset.as_langgraph_tools()` directly into their constructor.
+
+## Discord UX Contract
+
+For message-triggered turns, the Discord adapter should:
+
+1. react to the triggering message with `:eyes:` before starting the agent loop
+2. create a single placeholder reply in the eventual response location
+3. edit that same reply as the orchestrator emits status updates such as `Thinking`, provider fetches, and handoffs while relying on Discord's native typing indicator instead of a literal `Typing...` message state
+4. replace the placeholder content with the final public transcript once the turn completes
 
 ## Code Changes
 

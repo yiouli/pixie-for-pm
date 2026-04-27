@@ -8,6 +8,7 @@ from langchain_core.tools import BaseTool, StructuredTool
 from pydantic import BaseModel
 
 from pixie_for_pm.config.settings import AppSettings
+from pixie_for_pm.domain.models import StatusEmitter, emit_status_update
 from pixie_for_pm.integrations.registry import PROVIDERS
 from pixie_for_pm.web.encryption import CredentialCipher
 from pixie_for_pm.web.store import build_connection_store
@@ -56,12 +57,22 @@ class IntegrationRuntimeProvider(Protocol):
 
 
 class ToolsetInitializer(Protocol):
-    async def initialize(self, trigger: DiscordTriggerContext) -> AgentToolset: ...
+    async def initialize(
+        self,
+        trigger: DiscordTriggerContext,
+        *,
+        status_emitter: StatusEmitter | None = None,
+    ) -> AgentToolset: ...
 
 
 class EmptyToolsetInitializer:
-    async def initialize(self, trigger: DiscordTriggerContext) -> AgentToolset:
-        del trigger
+    async def initialize(
+        self,
+        trigger: DiscordTriggerContext,
+        *,
+        status_emitter: StatusEmitter | None = None,
+    ) -> AgentToolset:
+        del trigger, status_emitter
         return AgentToolset()
 
 
@@ -77,7 +88,12 @@ class IntegrationToolsetInitializer:
         self._cipher = cipher
         self._providers = dict(providers)
 
-    async def initialize(self, trigger: DiscordTriggerContext) -> AgentToolset:
+    async def initialize(
+        self,
+        trigger: DiscordTriggerContext,
+        *,
+        status_emitter: StatusEmitter | None = None,
+    ) -> AgentToolset:
         server = await self._store.get_server_by_discord_id(trigger.discord_server_id)
         if server is None:
             return AgentToolset()
@@ -110,7 +126,9 @@ class IntegrationToolsetInitializer:
                 self._wrap_tool(
                     tool=tool,
                     provider_id=connection.provider,
+                    provider_name=provider.name,
                     server_id=server.id,
+                    status_emitter=status_emitter,
                 )
                 for tool in provider_tools
             )
@@ -134,11 +152,21 @@ class IntegrationToolsetInitializer:
         *,
         tool: BaseTool,
         provider_id: str,
+        provider_name: str,
         server_id: str,
+        status_emitter: StatusEmitter | None,
     ) -> BaseTool:
         async def _invoke_tool(**kwargs: object) -> object:
+            await emit_status_update(
+                status_emitter,
+                f"Fetching data from {provider_name}...",
+            )
             result = await tool.ainvoke(kwargs)
             await self._store.touch_connection_last_used(server_id, provider_id)
+            await emit_status_update(
+                status_emitter,
+                f"Analyzing results from {provider_name}...",
+            )
             return result
 
         response_format: Literal["content", "content_and_artifact"] = getattr(

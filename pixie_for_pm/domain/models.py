@@ -1,11 +1,28 @@
 from __future__ import annotations
 
+import inspect
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from enum import StrEnum
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from pixie_for_pm.integrations.toolset import AgentToolset, DiscordTriggerContext
+
+
+StatusEmitter = Callable[[str], Awaitable[None] | None]
+
+
+async def emit_status_update(
+    status_emitter: StatusEmitter | None,
+    status: str,
+) -> None:
+    if status_emitter is None:
+        return
+
+    maybe_awaitable = status_emitter(status)
+    if inspect.isawaitable(maybe_awaitable):
+        await maybe_awaitable
 
 
 class AgentRole(StrEnum):
@@ -66,6 +83,7 @@ class WorkflowContext:
     transcript: tuple[AgentMessage, ...]
     trigger: DiscordTriggerContext
     toolset: AgentToolset
+    status_emitter: StatusEmitter | None = None
 
 
 @dataclass(frozen=True)

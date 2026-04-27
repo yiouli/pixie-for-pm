@@ -102,13 +102,13 @@ async def test_initializer_builds_langgraph_tools_for_all_connected_integrations
 
     toolset = await initializer.initialize(
         DiscordTriggerContext(
-            discord_server_id="guild-123",
-            discord_user_id="user-99",
-            channel_id=456,
-            thread_id="thread-1",
-            message_id=789,
-            thread_key="thread-1",
-            dispatch_reason="direct_bot_mention",
+            "guild-123",
+            "user-99",
+            456,
+            "thread-1",
+            789,
+            "thread-1",
+            "direct_bot_mention",
         )
     )
 
@@ -149,16 +149,18 @@ async def test_initialized_tool_invocation_passes_credentials_and_updates_last_u
         cipher=cipher,
         providers={"notion": notion_provider},
     )
+    progress_updates: list[str] = []
     toolset = await initializer.initialize(
         DiscordTriggerContext(
-            discord_server_id="guild-456",
-            discord_user_id="user-22",
-            channel_id=111,
-            thread_id=None,
-            message_id=222,
-            thread_key="channel-111-message-222",
-            dispatch_reason="reply_to_bot",
-        )
+            "guild-456",
+            "user-22",
+            111,
+            None,
+            222,
+            "channel-111-message-222",
+            "reply_to_bot",
+        ),
+        status_emitter=progress_updates.append,
     )
 
     result = await toolset.tools[1].ainvoke({"query": "roadmap"})
@@ -171,3 +173,7 @@ async def test_initialized_tool_invocation_passes_credentials_and_updates_last_u
     assert notion_provider.invocations == [{"query": "roadmap"}]
     assert connection is not None
     assert connection.last_used_at is not None
+    assert progress_updates == [
+        "Fetching data from Notion...",
+        "Analyzing results from Notion...",
+    ]

@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from collections.abc import Awaitable, Callable, Sequence
+from collections.abc import Awaitable, Callable, Mapping, Sequence
 from typing import Any, cast
 
 from deepagents import create_deep_agent
@@ -13,9 +13,11 @@ from pixie_for_pm.domain.models import (
     AgentMessage,
     AgentRole,
     WorkflowContext,
+    emit_status_update,
 )
 
 DEFAULT_PRODUCT_MANAGER_MODEL = "openai:gpt-5.4"
+PRODUCT_MANAGER_AGENT_NAME = "pixie_product_manager"
 
 _SYSTEM_PROMPT = """
 You are Pixie's product manager agent.
@@ -38,11 +40,13 @@ def build_product_manager_handler(
             tools=list(context.toolset.as_langgraph_tools()),
             system_prompt=_SYSTEM_PROMPT,
             checkpointer=False,
-            name="pixie_product_manager",
+            name=PRODUCT_MANAGER_AGENT_NAME,
         )
-        result = cast(
-            dict[str, object],
-            await agent.ainvoke(cast(Any, {"messages": _build_messages(context)})),
+        result = await _invoke_agent_with_status_events(
+            agent=agent,
+            context=context,
+            role=AgentRole.PRODUCT_MANAGER,
+            inputs={"messages": _build_messages(context)},
         )
         content = _extract_final_response_text(
             cast(Sequence[BaseMessage], result.get("messages", []))
@@ -67,6 +71,98 @@ def _resolve_model(
     if isinstance(model, str) and model.startswith("openai:") and openai_api_key:
         return init_chat_model(model=model, api_key=openai_api_key)
     return model
+
+
+async def _invoke_agent_with_status_events(
+    *,
+    agent: Any,
+    context: WorkflowContext,
+    role: AgentRole,
+    inputs: dict[str, object],
+) -> dict[str, object]:
+    if context.status_emitter is None:
+        return cast(dict[str, object], await agent.ainvoke(cast(Any, inputs)))
+
+    final_output: dict[str, object] | None = None
+    last_status: str | None = None
+    async for event in agent.astream_events(cast(Any, inputs), version="v2"):
+        status = _status_for_agent_event(event, role=role)
+        if status is not None and status != last_status:
+            await emit_status_update(context.status_emitter, status)
+            last_status = status
+
+        if (
+            event.get("event") == "on_chain_end"
+            and event.get("name") == PRODUCT_MANAGER_AGENT_NAME
+        ):
+            data = event.get("data")
+            if not isinstance(data, dict):
+                continue
+
+            output = data.get("output")
+            if isinstance(output, dict):
+                final_output = cast(dict[str, object], output)
+
+    if final_output is None:
+        raise RuntimeError("Product manager agent produced no final output.")
+
+    return final_output
+
+
+def _status_for_agent_event(
+    event: Mapping[str, object],
+    *,
+    role: AgentRole,
+) -> str | None:
+    subject = role.label.capitalize()
+    event_type = event.get("event")
+    if event_type == "on_chat_model_start":
+        return f"{subject} is reasoning..."
+
+    if event_type != "on_chat_model_end":
+        return None
+
+    output_message = _event_output_message(event)
+    if output_message is None:
+        return None
+
+    if output_message.tool_calls:
+        tool_name = _tool_call_name(output_message.tool_calls)
+        if tool_name is not None:
+            return f"{subject} is preparing to use {tool_name}..."
+        return f"{subject} is preparing to use a tool..."
+
+    if _coerce_text_content(output_message.content) != "":
+        return f"{subject} is drafting the response..."
+
+    return None
+
+
+def _event_output_message(event: Mapping[str, object]) -> AIMessage | None:
+    data = event.get("data")
+    if not isinstance(data, dict):
+        return None
+
+    output = data.get("output")
+    if isinstance(output, AIMessage):
+        return output
+
+    return None
+
+
+def _tool_call_name(tool_calls: object) -> str | None:
+    if not isinstance(tool_calls, list) or not tool_calls:
+        return None
+
+    first_call = tool_calls[0]
+    if not isinstance(first_call, dict):
+        return None
+
+    name = first_call.get("name")
+    if not isinstance(name, str) or name == "":
+        return None
+
+    return name.replace("_", " ")
 
 
 def _build_messages(context: WorkflowContext) -> list[BaseMessage]:

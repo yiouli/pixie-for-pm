@@ -68,7 +68,13 @@ class _StaticToolsetInitializer(ToolsetInitializer):
         self.toolset = toolset
         self.calls: list[DiscordTriggerContext] = []
 
-    async def initialize(self, trigger: DiscordTriggerContext) -> AgentToolset:
+    async def initialize(
+        self,
+        trigger: DiscordTriggerContext,
+        *,
+        status_emitter: object | None = None,
+    ) -> AgentToolset:
+        del status_emitter
         self.calls.append(trigger)
         return self.toolset
 
@@ -210,4 +216,88 @@ async def test_orchestrator_initializes_request_scoped_toolset_for_agent_context
     ]
     assert [trigger.discord_server_id for trigger in initializer.calls] == [
         "discord-server-789"
+    ]
+
+
+@pytest.mark.asyncio
+async def test_orchestrator_emits_progress_updates_for_tool_init_and_handoffs(
+    tmp_path: Path,
+) -> None:
+    request = build_dispatch_request(
+        IncomingDiscordMessage(
+            discord_message_id=13,
+            discord_server_id="discord-server-999",
+            channel_id=23,
+            thread_id="discord-thread-999",
+            author_id=32,
+            content="Can you size this opportunity and route the work?",
+            directly_mentions_bot=True,
+            is_reply_to_bot=False,
+        )
+    )
+    initializer = _StaticToolsetInitializer(AgentToolset())
+    progress_updates: list[str] = []
+
+    async with PixieOrchestrator(
+        checkpoint_path=tmp_path / "progress.sqlite",
+        agent_handlers={
+            AgentRole.PRODUCT_MANAGER: _pm_with_handoff,
+            AgentRole.MARKET_ANALYST: _market_placeholder,
+        },
+        toolset_initializer=initializer,
+    ) as orchestrator:
+        await orchestrator.dispatch(
+            request,
+            status_emitter=progress_updates.append,
+        )
+
+    assert progress_updates == [
+        "Checking connected tools...",
+        "Analyzing with product manager...",
+        "Handing off to market analyst...",
+        "Analyzing with market analyst...",
+    ]
+
+
+@pytest.mark.asyncio
+async def test_orchestrator_emits_internal_product_manager_status_updates(
+    tmp_path: Path,
+) -> None:
+    request = build_dispatch_request(
+        IncomingDiscordMessage(
+            discord_message_id=14,
+            discord_server_id="discord-server-1000",
+            channel_id=24,
+            thread_id="discord-thread-1000",
+            author_id=33,
+            content="Can you assess this product opportunity?",
+            directly_mentions_bot=True,
+            is_reply_to_bot=False,
+        )
+    )
+    progress_updates: list[str] = []
+
+    async with PixieOrchestrator(
+        checkpoint_path=tmp_path / "agent-progress.sqlite",
+        agent_handlers={
+            AgentRole.PRODUCT_MANAGER: build_product_manager_handler(
+                model=_ToolCallingFakeListChatModel(
+                    responses=[
+                        "PM_AGENT_OK Opportunity assessment: retention risk is "
+                        "low and GTM looks viable."
+                    ]
+                )
+            )
+        },
+    ) as orchestrator:
+        await orchestrator.dispatch(
+            request,
+            status_emitter=progress_updates.append,
+        )
+
+    assert progress_updates == [
+        "Checking connected tools...",
+        "Analyzing with product manager...",
+        "Product manager is reasoning...",
+        "Product manager is drafting the response...",
     ]

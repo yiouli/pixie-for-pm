@@ -142,6 +142,9 @@ Send:
 
 Expected result:
 
+- the triggering message gets an immediate `:eyes:` reaction
+- the bot posts a placeholder status message such as `Thinking...` before the final answer is ready
+- Discord also shows the native typing indicator while the bot is still working
 - the bot replies in the same channel
 - the response starts with `PM_AGENT_OK`
 - the response mentions `product manager`
@@ -162,6 +165,9 @@ Can you continue that analysis?
 
 Expected result:
 
+- the triggering message gets an immediate `:eyes:` reaction
+- the existing placeholder message updates while the bot works instead of waiting silently
+- if the turn fails, that same placeholder message is edited into an explicit error state
 - the bot replies once more in the same channel
 - the response starts with `PM_AGENT_OK`
 - the response stays on the single public bot surface instead of switching personas
@@ -177,6 +183,9 @@ Can you continue in this thread?
 
 Expected result:
 
+- the triggering message gets an immediate `:eyes:` reaction
+- the thread shows a placeholder status message before the final answer is edited into place
+- once the bot has already replied in the thread, later plain follow-up messages in that same thread continue the conversation without needing a fresh mention
 - the bot responds inside the thread
 - the response starts with `PM_AGENT_OK`
 - the response comes from the same public bot identity
