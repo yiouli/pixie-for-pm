@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import logging
+from collections import Counter, deque
 from collections.abc import Awaitable, Callable, Mapping, Sequence
 from typing import Any, cast
 
@@ -7,6 +9,7 @@ from deepagents import create_deep_agent
 from langchain.chat_models import init_chat_model
 from langchain_core.language_models.chat_models import BaseChatModel
 from langchain_core.messages import AIMessage, AIMessageChunk, BaseMessage, HumanMessage
+from langgraph.errors import GraphRecursionError
 
 from pixie_for_pm.domain.models import (
     AgentExecution,
@@ -18,9 +21,13 @@ from pixie_for_pm.domain.models import (
 )
 
 DEFAULT_DEEP_AGENT_MODEL = "openai:gpt-5.4"
+DEEP_AGENT_RECURSION_LIMIT = 100
+_RECENT_TOOL_CALL_LIMIT = 12
 
 ExecutionContextBuilder = Callable[[WorkflowContext], str | None]
 PreflightCheck = Callable[[WorkflowContext], AgentExecution | None]
+
+logger = logging.getLogger(__name__)
 
 
 async def run_deep_agent(
@@ -112,32 +119,98 @@ async def _invoke_agent_with_status_events(
     inputs: dict[str, object],
     agent_name: str,
 ) -> dict[str, object]:
+    logger.info(
+        "Starting deep agent turn for %s with tools=%s integrations=%s thread=%s",
+        role.value,
+        list(_tool_names(context)),
+        [integration.provider_id for integration in context.toolset.integrations],
+        context.thread_key,
+    )
+
     if context.status_emitter is None and context.response_emitter is None:
-        return cast(dict[str, object], await agent.ainvoke(cast(Any, inputs)))
+        try:
+            result = await agent.ainvoke(
+                cast(Any, inputs),
+                config=_agent_run_config(),
+            )
+        except GraphRecursionError:
+            logger.exception(
+                "Deep agent recursion limit hit for %s on thread=%s user_message=%r",
+                role.value,
+                context.thread_key,
+                _message_preview(context.user_message),
+            )
+            raise
+
+        logger.info(
+            "Completed deep agent turn for %s on thread=%s without streaming",
+            role.value,
+            context.thread_key,
+        )
+        return cast(dict[str, object], result)
 
     final_output: dict[str, object] | None = None
     last_status: str | None = None
-    async for event in agent.astream_events(cast(Any, inputs), version="v2"):
-        text_delta = _stream_text_delta(event)
-        if text_delta is not None:
-            await emit_response_chunk(context.response_emitter, text_delta)
+    event_count = 0
+    tool_call_counts: Counter[str] = Counter()
+    recent_tool_calls: deque[str] = deque(maxlen=_RECENT_TOOL_CALL_LIMIT)
 
-        status = _status_for_agent_event(event, role=role)
-        if status is not None and status != last_status:
-            await emit_status_update(context.status_emitter, status)
-            last_status = status
+    try:
+        async for event in agent.astream_events(
+            cast(Any, inputs),
+            config=_agent_run_config(),
+            version="v2",
+        ):
+            event_count += 1
+            _record_tool_activity(
+                event,
+                role=role,
+                tool_call_counts=tool_call_counts,
+                recent_tool_calls=recent_tool_calls,
+            )
 
-        if event.get("event") == "on_chain_end" and event.get("name") == agent_name:
-            data = event.get("data")
-            if not isinstance(data, dict):
-                continue
+            text_delta = _stream_text_delta(event)
+            if text_delta is not None:
+                await emit_response_chunk(context.response_emitter, text_delta)
 
-            output = data.get("output")
-            if isinstance(output, dict):
-                final_output = cast(dict[str, object], output)
+            status = _status_for_agent_event(event, role=role)
+            if status is not None and status != last_status:
+                await emit_status_update(context.status_emitter, status)
+                last_status = status
+
+            if event.get("event") == "on_chain_end" and event.get("name") == agent_name:
+                data = event.get("data")
+                if not isinstance(data, dict):
+                    continue
+
+                output = data.get("output")
+                if isinstance(output, dict):
+                    final_output = cast(dict[str, object], output)
+    except GraphRecursionError:
+        logger.exception(
+            (
+                "Deep agent recursion limit hit for %s on thread=%s after %s "
+                "events; recent_tools=%s tool_counts=%s user_message=%r"
+            ),
+            role.value,
+            context.thread_key,
+            event_count,
+            list(recent_tool_calls),
+            dict(tool_call_counts),
+            _message_preview(context.user_message),
+        )
+        raise
 
     if final_output is None:
         raise RuntimeError(f"{role.label.capitalize()} agent produced no final output.")
+
+    logger.info(
+        "Completed deep agent turn for %s on thread=%s after %s events with tool_counts=%s",
+        role.value,
+        context.thread_key,
+        event_count,
+        dict(tool_call_counts),
+    )
 
     return final_output
 
@@ -173,6 +246,18 @@ def _status_for_agent_event(
     event_type = event.get("event")
     if event_type == "on_chat_model_start":
         return f"{subject} is reasoning..."
+
+    if event_type == "on_tool_start":
+        tool_name = _event_name(event)
+        if tool_name is not None:
+            return f"{subject} is using {tool_name}..."
+        return f"{subject} is using a tool..."
+
+    if event_type == "on_tool_end":
+        tool_name = _event_name(event)
+        if tool_name is not None:
+            return f"{subject} is reviewing results from {tool_name}..."
+        return f"{subject} is reviewing tool results..."
 
     if event_type != "on_chat_model_end":
         return None
@@ -214,6 +299,28 @@ def _tool_call_name(tool_calls: object) -> str | None:
         return None
 
     name = first_call.get("name")
+    if not isinstance(name, str) or name == "":
+        return None
+
+    return name.replace("_", " ")
+
+
+def _tool_call_names(tool_calls: object) -> list[str]:
+    if not isinstance(tool_calls, list):
+        return []
+
+    names: list[str] = []
+    for tool_call in tool_calls:
+        if not isinstance(tool_call, dict):
+            continue
+        name = tool_call.get("name")
+        if isinstance(name, str) and name != "":
+            names.append(name)
+    return names
+
+
+def _event_name(event: Mapping[str, object]) -> str | None:
+    name = event.get("name")
     if not isinstance(name, str) or name == "":
         return None
 
@@ -283,8 +390,50 @@ def _coerce_text_content(content: object, *, strip: bool) -> str:
     return ""
 
 
+def _agent_run_config() -> dict[str, int]:
+    return {"recursion_limit": DEEP_AGENT_RECURSION_LIMIT}
+
+
+def _record_tool_activity(
+    event: Mapping[str, object],
+    *,
+    role: AgentRole,
+    tool_call_counts: Counter[str],
+    recent_tool_calls: deque[str],
+) -> None:
+    output_message = _event_output_message(event)
+    if output_message is None or not output_message.tool_calls:
+        return
+
+    tool_names = _tool_call_names(output_message.tool_calls)
+    if not tool_names:
+        return
+
+    for tool_name in tool_names:
+        tool_call_counts[tool_name] += 1
+        recent_tool_calls.append(tool_name)
+
+    logger.info(
+        "%s requested tools: %s",
+        role.value,
+        ", ".join(tool_names),
+    )
+
+
+def _tool_names(context: WorkflowContext) -> tuple[str, ...]:
+    return tuple(tool.name for tool in context.toolset.tools)
+
+
+def _message_preview(message: str, *, limit: int = 160) -> str:
+    normalized = " ".join(message.split())
+    if len(normalized) <= limit:
+        return normalized
+    return normalized[: limit - 3] + "..."
+
+
 __all__ = [
     "DEFAULT_DEEP_AGENT_MODEL",
+    "DEEP_AGENT_RECURSION_LIMIT",
     "ExecutionContextBuilder",
     "PreflightCheck",
     "build_deep_agent_handler",
