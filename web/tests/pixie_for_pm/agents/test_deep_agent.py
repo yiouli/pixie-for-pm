@@ -1,12 +1,17 @@
 from __future__ import annotations
 
 import logging
+from collections.abc import AsyncIterator
 
 import pytest
 from langchain_core.messages import AIMessage, BaseMessage
 from langchain_core.tools import ToolException
 
-from pixie_for_pm.agents.deep_agent import _status_for_agent_event, run_deep_agent
+from pixie_for_pm.agents.deep_agent import (
+    DEEP_AGENT_RECURSION_LIMIT,
+    _status_for_agent_event,
+    run_deep_agent,
+)
 from pixie_for_pm.domain.models import AgentRole, WorkflowContext
 from pixie_for_pm.integrations.toolset import (
     AgentToolset,
@@ -79,6 +84,41 @@ class _SingleAttemptAgent:
                 'The "update_content" command requires a "content_updates" parameter.'
             )
         return {"messages": [AIMessage(content="Recovered with new agent")]}
+
+
+class _ConfigCapturingDeepAgent:
+    def __init__(self) -> None:
+        self.ainvoke_configs: list[object | None] = []
+        self.astream_event_configs: list[object | None] = []
+
+    async def ainvoke(
+        self,
+        inputs: object,
+        config: object | None = None,
+    ) -> dict[str, object]:
+        del inputs
+        self.ainvoke_configs.append(config)
+        return {"messages": [AIMessage(content="Completed with ainvoke")]}
+
+    async def astream_events(
+        self,
+        inputs: object,
+        config: object | None = None,
+        *,
+        version: str,
+    ) -> AsyncIterator[dict[str, object]]:
+        del inputs
+        self.astream_event_configs.append(config)
+        yield {"event": "on_chat_model_start"}
+        yield {
+            "event": "on_chain_end",
+            "name": "pixie_user_researcher",
+            "data": {
+                "output": {
+                    "messages": [AIMessage(content=f"Completed with stream {version}")]
+                }
+            },
+        }
 
 
 @pytest.mark.parametrize(
@@ -270,3 +310,80 @@ async def test_run_deep_agent_recreates_agent_for_validation_retry(
     retry_message = created_agents[1].calls[0][-1]
     assert "update_content" in retry_message.content
     assert "content_updates" in retry_message.content
+
+
+@pytest.mark.asyncio
+async def test_run_deep_agent_passes_recursion_limit_to_ainvoke(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    agent = _ConfigCapturingDeepAgent()
+    monkeypatch.setattr(
+        "pixie_for_pm.agents.deep_agent.create_deep_agent",
+        lambda **kwargs: agent,
+    )
+
+    result = await run_deep_agent(
+        role=AgentRole.USER_RESEARCHER,
+        agent_name="pixie_user_researcher",
+        system_prompt="Investigate the issue.",
+        context=WorkflowContext(
+            thread_key="discord-thread-407",
+            current_agent=AgentRole.USER_RESEARCHER,
+            user_message="Summarize the research evidence.",
+            transcript=(),
+            trigger=DiscordTriggerContext(
+                discord_server_id="discord-server-407",
+                discord_user_id="user-407",
+                channel_id=15,
+                thread_id="discord-thread-407",
+                message_id=101,
+                thread_key="discord-thread-407",
+                dispatch_reason="direct_bot_mention",
+            ),
+            toolset=AgentToolset(),
+        ),
+        model="test-model",
+    )
+
+    assert result == "Completed with ainvoke"
+    assert agent.ainvoke_configs == [{"recursion_limit": DEEP_AGENT_RECURSION_LIMIT}]
+
+
+@pytest.mark.asyncio
+async def test_run_deep_agent_passes_recursion_limit_to_stream_events(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    agent = _ConfigCapturingDeepAgent()
+    monkeypatch.setattr(
+        "pixie_for_pm.agents.deep_agent.create_deep_agent",
+        lambda **kwargs: agent,
+    )
+
+    result = await run_deep_agent(
+        role=AgentRole.USER_RESEARCHER,
+        agent_name="pixie_user_researcher",
+        system_prompt="Investigate the issue.",
+        context=WorkflowContext(
+            thread_key="discord-thread-408",
+            current_agent=AgentRole.USER_RESEARCHER,
+            user_message="Summarize the research evidence.",
+            transcript=(),
+            trigger=DiscordTriggerContext(
+                discord_server_id="discord-server-408",
+                discord_user_id="user-408",
+                channel_id=16,
+                thread_id="discord-thread-408",
+                message_id=102,
+                thread_key="discord-thread-408",
+                dispatch_reason="direct_bot_mention",
+            ),
+            toolset=AgentToolset(),
+            status_emitter=lambda _: None,
+        ),
+        model="test-model",
+    )
+
+    assert result == "Completed with stream v2"
+    assert agent.astream_event_configs == [
+        {"recursion_limit": DEEP_AGENT_RECURSION_LIMIT}
+    ]

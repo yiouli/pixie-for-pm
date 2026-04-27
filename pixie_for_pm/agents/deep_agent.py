@@ -21,6 +21,7 @@ from pixie_for_pm.domain.models import (
 )
 
 DEFAULT_DEEP_AGENT_MODEL = "openai:gpt-5.4"
+DEEP_AGENT_RECURSION_LIMIT = 100
 
 logger = logging.getLogger(__name__)
 
@@ -183,11 +184,18 @@ async def _invoke_agent_with_status_events(
     agent_name: str,
 ) -> dict[str, object]:
     if context.status_emitter is None and context.response_emitter is None:
-        return cast(dict[str, object], await agent.ainvoke(cast(Any, inputs)))
+        return cast(
+            dict[str, object],
+            await agent.ainvoke(cast(Any, inputs), config=_deep_agent_config()),
+        )
 
     final_output: dict[str, object] | None = None
     last_status: str | None = None
-    async for event in agent.astream_events(cast(Any, inputs), version="v2"):
+    async for event in agent.astream_events(
+        cast(Any, inputs),
+        config=_deep_agent_config(),
+        version="v2",
+    ):
         text_delta = _stream_text_delta(event)
         if text_delta is not None:
             await emit_response_chunk(context.response_emitter, text_delta)
@@ -398,6 +406,10 @@ def _build_tool_validation_retry_guidance(
     )
 
 
+def _deep_agent_config() -> dict[str, int]:
+    return {"recursion_limit": DEEP_AGENT_RECURSION_LIMIT}
+
+
 def _log_deep_agent_failure(
     exc: Exception,
     *,
@@ -442,6 +454,7 @@ def _format_tool_failures(context: WorkflowContext) -> str:
 
 
 __all__ = [
+    "DEEP_AGENT_RECURSION_LIMIT",
     "DEFAULT_DEEP_AGENT_MODEL",
     "ExecutionContextBuilder",
     "PreflightCheck",
