@@ -291,6 +291,7 @@ class _FakeSentMessage:
         self.embed = embed
         self.edits: list[str] = []
         self.embed_edits: list[discord.Embed] = []
+        self.deleted = False
 
     async def edit(
         self,
@@ -305,6 +306,9 @@ class _FakeSentMessage:
             self.embed = embed
             self.embed_edits.append(embed)
         return self
+
+    async def delete(self) -> None:
+        self.deleted = True
 
 
 class _FakeResolvedMessage:
@@ -558,9 +562,9 @@ async def test_reply_to_thread_starter_reuses_existing_thread(
     assert events[0] == "reaction"
     assert "send" in events
     assert "dispatch" in events
-    assert thread.messages == ["Thinking..."]
-    assert thread.sent_messages[0].edits[-1] == "Thread reply from Pixie"
-    assert "Analyzing request..." in thread.sent_messages[0].edits
+    assert thread.messages == ["", "Thread reply from Pixie"]
+    assert thread.sent_messages[0].embed_edits[-1].description == "Analyzing request..."
+    assert thread.sent_messages[1].content == "Thread reply from Pixie"
 
 
 @pytest.mark.asyncio
@@ -595,8 +599,8 @@ async def test_direct_mention_creates_thread_and_replies_in_thread(
     assert orchestrator.requests[0].message.thread_id == str(created_thread.id)
     assert channel.messages == []
     assert message.reply_messages == []
-    assert created_thread.messages == ["Thinking..."]
-    assert created_thread.sent_messages[0].edits[-1] == "Thread reply from Pixie"
+    assert created_thread.messages == ["", "Thread reply from Pixie"]
+    assert created_thread.sent_messages[1].content == "Thread reply from Pixie"
 
 
 @pytest.mark.asyncio
@@ -644,6 +648,7 @@ async def test_progress_reporter_renders_status_updates_as_in_progress_embed() -
     await reporter.emit("Analyzing request...")
 
     status_message = response_channel.sent_messages[0]
+    assert status_message.content == ""
     assert status_message.embed is not None
     assert status_message.embed.title == "Pixie is working"
     assert status_message.embed.description == "Analyzing request..."
@@ -652,9 +657,7 @@ async def test_progress_reporter_renders_status_updates_as_in_progress_embed() -
 
 
 @pytest.mark.asyncio
-async def test_progress_reporter_splits_responses_at_the_default_discord_limit() -> (
-    None
-):
+async def test_progress_reporter_refreshes_typing_after_non_final_output() -> None:
     events: list[str] = []
     source_message = _FakeDiscordMessage(
         message_id=17,
@@ -669,7 +672,38 @@ async def test_progress_reporter_splits_responses_at_the_default_discord_limit()
         source_message=cast(discord.Message, source_message),
         response_channel=response_channel,
     )
-    natural_break = "A" * 1988
+
+    original_interval = bot_module.DISCORD_STREAM_UPDATE_INTERVAL
+    bot_module.DISCORD_STREAM_UPDATE_INTERVAL = 40
+    try:
+        await reporter.emit("Thinking...")
+        assert events[-2:] == ["send", "typing-indicator"]
+
+        await reporter.stream_content("A" * 60)
+        assert events[-2:] == ["send", "typing-indicator"]
+    finally:
+        bot_module.DISCORD_STREAM_UPDATE_INTERVAL = original_interval
+
+
+@pytest.mark.asyncio
+async def test_progress_reporter_splits_responses_at_the_default_stream_chunk_size() -> (
+    None
+):
+    events: list[str] = []
+    source_message = _FakeDiscordMessage(
+        message_id=18,
+        content="status",
+        author_id=42,
+        channel=_FakeChannel(22, events=events),
+        guild_id=99,
+        events=events,
+    )
+    response_channel = _FakeChannel(55, events=events)
+    reporter = _DiscordProgressReporter(
+        source_message=cast(discord.Message, source_message),
+        response_channel=response_channel,
+    )
+    natural_break = "A" * 488
     transcript = [
         AgentMessage(
             agent=AgentRole.PRODUCT_MANAGER,
@@ -680,17 +714,17 @@ async def test_progress_reporter_splits_responses_at_the_default_discord_limit()
     await reporter.start()
     await reporter.publish_transcript(transcript)
 
-    assert len(response_channel.sent_messages) == 2
-    assert len(response_channel.sent_messages[0].edits[-1]) <= 2000
-    assert response_channel.sent_messages[0].edits[-1] == f"{natural_break}."
-    assert response_channel.sent_messages[1].content == "Second chunk starts here."
+    assert len(response_channel.sent_messages) == 3
+    assert response_channel.sent_messages[1].content == f"{natural_break}."
+    assert len(response_channel.sent_messages[1].content) <= 500
+    assert response_channel.sent_messages[2].content == "Second chunk starts here."
 
 
 @pytest.mark.asyncio
 async def test_progress_reporter_streams_partial_content_before_final_publish() -> None:
     events: list[str] = []
     source_message = _FakeDiscordMessage(
-        message_id=18,
+        message_id=19,
         content="status",
         author_id=42,
         channel=_FakeChannel(22, events=events),
@@ -708,8 +742,10 @@ async def test_progress_reporter_streams_partial_content_before_final_publish() 
     await reporter.stream_content("B" * 300)
 
     status_message = response_channel.sent_messages[0]
-    assert any(edit.endswith("(cont.)") for edit in status_message.edits)
-    assert status_message.edits[-1].endswith("(cont.)")
+    assert len(response_channel.sent_messages) == 2
+    assert status_message.content == ""
+    assert status_message.edits == []
+    assert response_channel.sent_messages[1].content == ("A" * 300) + ("B" * 200)
 
     await reporter.publish_transcript(
         [
@@ -720,14 +756,17 @@ async def test_progress_reporter_streams_partial_content_before_final_publish() 
         ]
     )
 
-    assert status_message.edits[-1] == ("A" * 300) + ("B" * 300)
+    assert len(response_channel.sent_messages) == 3
+    assert response_channel.sent_messages[1].content == ("A" * 300) + ("B" * 200)
+    assert response_channel.sent_messages[2].content == ("B" * 100)
+    assert status_message.deleted is True
 
 
 @pytest.mark.asyncio
 async def test_progress_reporter_rolls_over_to_follow_up_while_streaming() -> None:
     events: list[str] = []
     source_message = _FakeDiscordMessage(
-        message_id=19,
+        message_id=20,
         content="status",
         author_id=42,
         channel=_FakeChannel(22, events=events),
@@ -744,18 +783,128 @@ async def test_progress_reporter_rolls_over_to_follow_up_while_streaming() -> No
     bot_module.DISCORD_MESSAGE_LIMIT = 80
     try:
         await reporter.start()
-        await reporter.stream_content("First section stays together and ends cleanly.\n\n")
+        await reporter.stream_content(
+            "First section stays together and ends cleanly.\n\n"
+        )
         await reporter.stream_content(
             "Second section keeps streaming with more detail than fits in one chunk."
         )
 
         assert len(response_channel.sent_messages) == 2
-        assert response_channel.sent_messages[0].edits[-1] == (
+        assert response_channel.sent_messages[1].content == (
             "First section stays together and ends cleanly."
         )
-        assert response_channel.sent_messages[1].content.endswith("(cont.)")
+        await reporter.publish_transcript(
+            [
+                AgentMessage(
+                    agent=AgentRole.PRODUCT_MANAGER,
+                    content=(
+                        "First section stays together and ends cleanly.\n\n"
+                        "Second section keeps streaming with more detail than fits in one chunk."
+                    ),
+                )
+            ]
+        )
+        assert len(response_channel.sent_messages) == 3
+        assert response_channel.sent_messages[2].content.startswith("Second section")
     finally:
         bot_module.DISCORD_MESSAGE_LIMIT = original_limit
+
+
+@pytest.mark.asyncio
+async def test_progress_reporter_flushes_stream_at_clean_break_within_chunk_size() -> (
+    None
+):
+    events: list[str] = []
+    source_message = _FakeDiscordMessage(
+        message_id=21,
+        content="status",
+        author_id=42,
+        channel=_FakeChannel(22, events=events),
+        guild_id=99,
+        events=events,
+    )
+    response_channel = _FakeChannel(55, events=events)
+    reporter = _DiscordProgressReporter(
+        source_message=cast(discord.Message, source_message),
+        response_channel=response_channel,
+    )
+
+    original_interval = bot_module.DISCORD_STREAM_UPDATE_INTERVAL
+    original_limit = bot_module.DISCORD_MESSAGE_LIMIT
+    bot_module.DISCORD_STREAM_UPDATE_INTERVAL = 40
+    bot_module.DISCORD_MESSAGE_LIMIT = 2000
+    try:
+        await reporter.start()
+        await reporter.stream_content(
+            "First sentence ends here. Second sentence keeps going afterward."
+        )
+
+        assert len(response_channel.sent_messages) == 2
+        assert response_channel.sent_messages[1].content == "First sentence ends here."
+
+        await reporter.publish_transcript(
+            [
+                AgentMessage(
+                    agent=AgentRole.PRODUCT_MANAGER,
+                    content=(
+                        "First sentence ends here. "
+                        "Second sentence keeps going afterward."
+                    ),
+                )
+            ]
+        )
+
+        assert len(response_channel.sent_messages) == 3
+        assert response_channel.sent_messages[2].content == (
+            "Second sentence keeps going afterward."
+        )
+    finally:
+        bot_module.DISCORD_STREAM_UPDATE_INTERVAL = original_interval
+        bot_module.DISCORD_MESSAGE_LIMIT = original_limit
+
+
+@pytest.mark.asyncio
+async def test_progress_reporter_renders_markdown_tables_for_discord() -> None:
+    events: list[str] = []
+    source_message = _FakeDiscordMessage(
+        message_id=22,
+        content="status",
+        author_id=42,
+        channel=_FakeChannel(22, events=events),
+        guild_id=99,
+        events=events,
+    )
+    response_channel = _FakeChannel(55, events=events)
+    reporter = _DiscordProgressReporter(
+        source_message=cast(discord.Message, source_message),
+        response_channel=response_channel,
+    )
+
+    await reporter.start()
+    await reporter.publish_transcript(
+        [
+            AgentMessage(
+                agent=AgentRole.PRODUCT_MANAGER,
+                content=(
+                    "Shortlist:\n\n"
+                    "| Player | Category |\n"
+                    "| --- | --- |\n"
+                    "| LangSmith | Observability |\n"
+                    "| Braintrust | Evals |"
+                ),
+            )
+        ]
+    )
+
+    assert len(response_channel.sent_messages) == 2
+    rendered_content = response_channel.sent_messages[1].content
+    assert rendered_content.startswith("Shortlist:\n\n```text\n")
+    assert "Player" in rendered_content
+    assert "LangSmith" in rendered_content
+    assert "Braintrust" in rendered_content
+    assert "| --- | --- |" not in rendered_content
+    assert rendered_content.endswith("\n```")
 
 
 @pytest.mark.asyncio
@@ -799,8 +948,8 @@ async def test_direct_mention_thread_starter_echo_is_ignored(
     )
 
     assert len(orchestrator.requests) == 1
-    assert created_thread.messages == ["Thinking..."]
-    assert len(created_thread.sent_messages) == 1
+    assert created_thread.messages == ["", "Thread reply from Pixie"]
+    assert len(created_thread.sent_messages) == 2
 
 
 @pytest.mark.asyncio
@@ -839,9 +988,12 @@ async def test_reply_to_bot_message_creates_thread_and_replies_in_thread(
     assert len(message.created_threads) == 1
     created_thread = message.created_threads[0]
     assert orchestrator.requests[0].message.thread_id == str(created_thread.id)
-    assert created_thread.messages == ["Thinking..."]
-    assert created_thread.sent_messages[0].edits[-1] == "Thread reply from Pixie"
-    assert "Analyzing request..." in created_thread.sent_messages[0].edits
+    assert created_thread.messages == ["", "Thread reply from Pixie"]
+    assert (
+        created_thread.sent_messages[0].embed_edits[-1].description
+        == "Analyzing request..."
+    )
+    assert created_thread.sent_messages[1].content == "Thread reply from Pixie"
 
 
 @pytest.mark.asyncio
@@ -883,11 +1035,11 @@ async def test_long_transcript_is_split_across_messages_at_natural_breaks(
     )
 
     created_thread = message.created_threads[0]
-    first_reply = created_thread.sent_messages[0]
-    second_reply = created_thread.sent_messages[1]
-    assert len(first_reply.edits[0]) <= 80
-    assert first_reply.edits[-1] == "First section stays together and ends cleanly."
-    assert "Second section" not in first_reply.edits[-1]
+    first_reply = created_thread.sent_messages[1]
+    second_reply = created_thread.sent_messages[2]
+    assert len(first_reply.content) <= 80
+    assert first_reply.content == "First section stays together and ends cleanly."
+    assert "Second section" not in first_reply.content
     assert second_reply.content.startswith("Second section")
 
 
@@ -962,7 +1114,8 @@ async def test_thread_message_dispatches_when_thread_already_contains_bot_messag
     assert len(orchestrator.requests) == 1
     assert orchestrator.requests[0].message.thread_id == "55"
     assert message.reactions == ["\N{EYES}"]
-    assert thread.sent_messages[0].edits[-1] == "Thread reply from Pixie"
+    assert thread.messages == ["", "Thread reply from Pixie"]
+    assert thread.sent_messages[1].content == "Thread reply from Pixie"
 
 
 @pytest.mark.asyncio
@@ -998,7 +1151,7 @@ async def test_dispatch_failure_edits_status_message_to_error(
     assert message.reply_messages == []
     assert len(message.created_threads) == 1
     created_thread = message.created_threads[0]
-    assert created_thread.messages == ["Thinking..."]
+    assert created_thread.messages == [""]
     assert created_thread.sent_messages[0].edits[-1] == ""
     error_embed = created_thread.sent_messages[0].embed_edits[-1]
     assert error_embed.title == "Pixie couldn't complete that request"

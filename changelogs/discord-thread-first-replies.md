@@ -10,7 +10,7 @@
 - enforce Discord's real 2000-character message limit when editing or sending reply chunks so long answers do not fail at publish time
 - style failure responses with a red Discord embed and fall back to `typing()` when `trigger_typing()` is unavailable on the response target
 - render in-progress status updates as an orange Discord embed so working-state messages are visually distinct from final answers
-- use a temporary `(cont.)` marker for partial chunks and remove it from the prior message once the next continuation message is sent
+- stream append-only partial chunks into new Discord messages with no continuation marker and no retroactive content edits, to avoid duplicated or mixed-up streamed output
 - propagate internal product-manager model lifecycle events into Discord status updates so long-running turns advance beyond the initial agent-routing message
 - stream product-manager content deltas into Discord during generation, flushing partial message edits roughly every 500 characters and rolling over to a follow-up message immediately when a chunk hits Discord's limit
 

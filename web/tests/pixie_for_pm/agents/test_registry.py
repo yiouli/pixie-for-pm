@@ -62,9 +62,7 @@ async def test_product_manager_handler_emits_streamed_content_deltas() -> None:
     streamed_chunks: list[str] = []
     handler = build_product_manager_handler(
         model=_ToolCallingFakeListChatModel(
-            responses=[
-                "PM_AGENT_OK Live streamed response for Discord delivery."
-            ]
+            responses=["PM_AGENT_OK Live streamed response for Discord delivery."]
         )
     )
 

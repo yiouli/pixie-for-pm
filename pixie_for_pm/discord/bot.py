@@ -27,12 +27,12 @@ logger = logging.getLogger(__name__)
 
 DISCORD_MESSAGE_LIMIT = 2000
 DISCORD_STREAM_UPDATE_INTERVAL = 500
-DISCORD_CONTINUATION_SUFFIX = " (cont.)"
 DISCORD_ERROR_TITLE = "Pixie couldn't complete that request"
 DISCORD_STATUS_TITLE = "Pixie is working"
 DEFAULT_THREAD_NAME = "pixie chat"
 MAX_THREAD_NAME_LENGTH = 60
 _DISCORD_MENTION_PATTERN = re.compile(r"<@!?\d+>")
+_MARKDOWN_TABLE_SEPARATOR_PATTERN = re.compile(r"^:?-{3,}:?$")
 _LEADING_REQUEST_PATTERN = re.compile(
     r"^(?:please\s+)?(?:(?:can|could|would|will)\s+you\s+)",
     re.IGNORECASE,
@@ -75,17 +75,13 @@ def split_discord_response(
     chunks: list[str] = []
     remaining = normalized_content
     while len(remaining) > active_limit:
-        chunk_limit = active_limit - len(DISCORD_CONTINUATION_SUFFIX)
-        if chunk_limit <= 0:
-            raise RuntimeError("Discord continuation suffix exceeds the message limit.")
-
-        split_at = _natural_break_index(remaining, chunk_limit)
+        split_at = _natural_break_index(remaining, active_limit)
         if split_at <= 0:
-            split_at = chunk_limit
+            split_at = active_limit
 
         chunk = remaining[:split_at].rstrip()
         if chunk == "":
-            chunk = remaining[:chunk_limit].rstrip()
+            chunk = remaining[:active_limit].rstrip()
             split_at = len(chunk)
 
         chunks.append(chunk)
@@ -97,12 +93,88 @@ def split_discord_response(
 
 def _natural_break_index(content: str, limit: int) -> int:
     candidate = content[:limit]
-    delimiters = ("\n\n", "\n", ". ", "? ", "! ", "; ", ": ", ", ", " ")
-    for delimiter in delimiters:
+    for delimiter in ("\n\n", "\n"):
         index = candidate.rfind(delimiter)
-        if index != -1:
-            return index + len(delimiter.rstrip())
+        if index > 0:
+            return index
+
+    for delimiter in (". ", "? ", "! ", ".\n", "?\n", "!\n"):
+        index = candidate.rfind(delimiter)
+        if index > 0:
+            return index + 1
+
     return limit
+
+
+def _stream_chunk_limit() -> int:
+    return min(DISCORD_STREAM_UPDATE_INTERVAL, DISCORD_MESSAGE_LIMIT)
+
+
+def _parse_markdown_table_row(line: str) -> list[str]:
+    stripped = line.strip()
+    if not stripped.startswith("|") or not stripped.endswith("|"):
+        return []
+    return [cell.strip() for cell in stripped[1:-1].split("|")]
+
+
+def _is_markdown_table_separator(line: str, *, expected_columns: int) -> bool:
+    cells = _parse_markdown_table_row(line)
+    if len(cells) != expected_columns or expected_columns == 0:
+        return False
+    return all(_MARKDOWN_TABLE_SEPARATOR_PATTERN.fullmatch(cell) for cell in cells)
+
+
+def _render_markdown_table(lines: Sequence[str]) -> list[str]:
+    header_cells = _parse_markdown_table_row(lines[0])
+    data_cells = [_parse_markdown_table_row(line) for line in lines[2:]]
+    widths = [len(cell) for cell in header_cells]
+    for row in data_cells:
+        for index, cell in enumerate(row):
+            widths[index] = max(widths[index], len(cell))
+
+    rendered_rows = [
+        " | ".join(
+            cell.ljust(widths[index]) for index, cell in enumerate(header_cells)
+        ).rstrip(),
+        "+".join("-" * width for width in widths),
+    ]
+    for row in data_cells:
+        rendered_rows.append(
+            " | ".join(
+                cell.ljust(widths[index]) for index, cell in enumerate(row)
+            ).rstrip()
+        )
+    return ["```text", *rendered_rows, "```"]
+
+
+def _render_discord_content(content: str) -> str:
+    lines = content.split("\n")
+    rendered_lines: list[str] = []
+    index = 0
+    while index < len(lines):
+        header_cells = _parse_markdown_table_row(lines[index])
+        if (
+            header_cells
+            and index + 1 < len(lines)
+            and _is_markdown_table_separator(
+                lines[index + 1], expected_columns=len(header_cells)
+            )
+        ):
+            table_lines = [lines[index], lines[index + 1]]
+            index += 2
+            while index < len(lines):
+                row_cells = _parse_markdown_table_row(lines[index])
+                if len(row_cells) != len(header_cells):
+                    break
+                table_lines.append(lines[index])
+                index += 1
+            rendered_lines.extend(_render_markdown_table(table_lines))
+            continue
+
+        rendered_lines.append(lines[index])
+        index += 1
+
+    return "\n".join(rendered_lines)
 
 
 def _error_embed(description: str) -> discord.Embed:
@@ -155,11 +227,10 @@ class _DiscordProgressReporter:
         self._source_message = source_message
         self._response_channel = response_channel
         self._status_message: object | None = None
-        self._follow_up_messages: list[object] = []
         self._typing_task: asyncio.Task[None] | None = None
         self._last_status: str | None = None
-        self._stream_content: str = ""
-        self._stream_rendered_length = 0
+        self._stream_buffer: str = ""
+        self._has_stream_activity = False
 
     async def start(self) -> None:
         await self._add_eyes_reaction()
@@ -173,56 +244,51 @@ class _DiscordProgressReporter:
 
         self._last_status = normalized_status
         await self._trigger_typing_once()
-        if self._stream_content != "":
+        if self._has_stream_activity or self._stream_buffer != "":
             return
 
         status_embed = _status_embed(normalized_status)
         if self._status_message is None:
             self._status_message = await self._send_response(
-                normalized_status,
+                "",
                 embed=status_embed,
+                keep_typing=True,
             )
             return
 
-        await self._edit_status_message(normalized_status, embed=status_embed)
+        await self._edit_status_message("", embed=status_embed, keep_typing=True)
 
     async def stream_content(self, delta: str) -> None:
         if delta == "":
             return
 
-        previous_chunk_count = len(
-            split_discord_response(self._stream_content, trim_whitespace=False)
-        )
-        self._stream_content += delta
-        current_chunk_count = len(
-            split_discord_response(self._stream_content, trim_whitespace=False)
-        )
-        should_render = (
-            current_chunk_count > previous_chunk_count
-            or len(self._stream_content) - self._stream_rendered_length
-            >= DISCORD_STREAM_UPDATE_INTERVAL
-        )
-        if should_render:
-            await self._render_stream_content(final=False)
+        self._has_stream_activity = True
+        self._stream_buffer += delta
+        await self._flush_stream_buffer(final=False)
 
     async def publish_transcript(self, transcript: Sequence[AgentMessage]) -> None:
         final_content = compose_public_reply(transcript)
         if final_content == "":
             raise RuntimeError("Orchestrator returned no user-visible messages.")
 
-        self._stream_content = final_content
-        await self._render_stream_content(final=True)
-
+        if not self._has_stream_activity:
+            self._stream_buffer = final_content
+        await self._flush_stream_buffer(final=True)
+        await self._delete_status_message()
         self._last_status = final_content
 
     async def publish_error(self, content: str) -> None:
         embed = _error_embed(content)
         if self._status_message is None:
-            self._status_message = await self._send_response("", embed=embed)
+            self._status_message = await self._send_response(
+                "",
+                embed=embed,
+                keep_typing=False,
+            )
             self._last_status = content
             return
 
-        await self._edit_status_message("", embed=embed)
+        await self._edit_status_message("", embed=embed, keep_typing=False)
         self._last_status = content
 
     async def close(self) -> None:
@@ -278,13 +344,17 @@ class _DiscordProgressReporter:
         content: str,
         *,
         embed: discord.Embed | None = None,
+        keep_typing: bool = False,
     ) -> object:
         reply_send = cast(
             Callable[..., Awaitable[object]] | None,
             getattr(self._response_channel, "reply", None),
         )
         if reply_send is not None:
-            return await reply_send(content, mention_author=False, embed=embed)
+            message = await reply_send(content, mention_author=False, embed=embed)
+            if keep_typing:
+                await self._trigger_typing_once()
+            return message
 
         channel_send = cast(
             Callable[..., Awaitable[object]] | None,
@@ -294,31 +364,52 @@ class _DiscordProgressReporter:
             raise RuntimeError(
                 "Configured Discord channel does not support sending messages."
             )
-        return await channel_send(content, embed=embed)
+        message = await channel_send(content, embed=embed)
+        if keep_typing:
+            await self._trigger_typing_once()
+        return message
 
-    async def _send_follow_up(self, content: str) -> object:
+    async def _send_follow_up(self, content: str, *, keep_typing: bool) -> object:
+        rendered_content = _render_discord_content(content)
         channel_send = cast(
             Callable[..., Awaitable[object]] | None,
             getattr(self._response_channel, "send", None),
         )
         if channel_send is not None:
-            return await channel_send(content)
-        return await self._send_response(content)
+            message = await channel_send(rendered_content)
+            if keep_typing:
+                await self._trigger_typing_once()
+            return message
+        return await self._send_response(rendered_content, keep_typing=keep_typing)
 
     async def _edit_status_message(
         self,
         content: str,
         *,
         embed: discord.Embed | None = None,
+        keep_typing: bool = False,
     ) -> None:
         if self._status_message is None:
-            self._status_message = await self._send_response(content, embed=embed)
+            self._status_message = await self._send_response(
+                content,
+                embed=embed,
+                keep_typing=keep_typing,
+            )
             return
 
-        if await self._edit_message(self._status_message, content, embed=embed):
+        if await self._edit_message(
+            self._status_message,
+            content,
+            embed=embed,
+            keep_typing=keep_typing,
+        ):
             return
 
-        self._status_message = await self._send_response(content, embed=embed)
+        self._status_message = await self._send_response(
+            content,
+            embed=embed,
+            keep_typing=keep_typing,
+        )
 
     async def _edit_message(
         self,
@@ -326,6 +417,7 @@ class _DiscordProgressReporter:
         content: str,
         *,
         embed: discord.Embed | None = None,
+        keep_typing: bool = False,
     ) -> bool:
         if message is None:
             return False
@@ -338,40 +430,62 @@ class _DiscordProgressReporter:
             return False
 
         await edit_message(content=content, embed=embed)
+        if keep_typing:
+            await self._trigger_typing_once()
         return True
 
-    async def _render_stream_content(self, *, final: bool) -> None:
-        chunks = split_discord_response(
-            self._stream_content,
-            trim_whitespace=False,
-        )
-        if not chunks:
+    async def _delete_status_message(self) -> None:
+        if self._status_message is None:
             return
 
-        rendered_chunks = list(chunks)
-        if not final:
-            rendered_chunks[-1] = self._with_continuation(rendered_chunks[-1].rstrip())
+        delete_message = cast(
+            Callable[[], Awaitable[object]] | None,
+            getattr(self._status_message, "delete", None),
+        )
+        if delete_message is None:
+            self._status_message = None
+            return
 
-        for index, content in enumerate(rendered_chunks):
-            if index == 0:
-                if self._status_message is None:
-                    self._status_message = await self._send_response(content)
-                else:
-                    await self._edit_status_message(content, embed=None)
-                continue
+        with suppress(discord.HTTPException):
+            await delete_message()
+        self._status_message = None
 
-            message_index = index - 1
-            if message_index < len(self._follow_up_messages):
-                await self._edit_message(self._follow_up_messages[message_index], content)
-                continue
+    async def _flush_stream_buffer(self, *, final: bool) -> None:
+        while True:
+            next_chunk = self._next_stream_chunk(final=final)
+            if next_chunk is None:
+                return
 
-            follow_up_message = await self._send_follow_up(content)
-            self._follow_up_messages.append(follow_up_message)
+            split_at, content = next_chunk
+            remaining_buffer = self._stream_buffer[split_at:].lstrip()
+            await self._send_follow_up(
+                content,
+                keep_typing=(not final) or remaining_buffer != "",
+            )
+            self._stream_buffer = remaining_buffer
 
-        self._stream_rendered_length = len(self._stream_content)
+    def _next_stream_chunk(self, *, final: bool) -> tuple[int, str] | None:
+        if self._stream_buffer == "":
+            return None
 
-    def _with_continuation(self, content: str) -> str:
-        return f"{content}{DISCORD_CONTINUATION_SUFFIX}"
+        chunk_limit = _stream_chunk_limit()
+
+        if final and len(self._stream_buffer) <= chunk_limit:
+            return (len(self._stream_buffer), self._stream_buffer)
+
+        if len(self._stream_buffer) < chunk_limit:
+            return None
+
+        split_at = _natural_break_index(self._stream_buffer, chunk_limit)
+        if split_at <= 0:
+            split_at = chunk_limit
+
+        content = self._stream_buffer[:split_at].rstrip()
+        if content == "":
+            content = self._stream_buffer[:chunk_limit].rstrip()
+            split_at = len(self._stream_buffer[:chunk_limit])
+
+        return (split_at, content)
 
 
 class PixieDiscordBot(discord.Client):
