@@ -6,13 +6,13 @@ pixie-for-pm is a Discord-triggered, LangGraph-orchestrated product collaboratio
 
 Pixie keeps five internal agent roles:
 
+- dispatcher
 - product manager
 - market analyst
 - user researcher
-- data scientist
 - product designer
 
-The product manager entrypoint now runs as a LangChain Deep Agents handler backed by an OpenAI chat model. The remaining internal roles still use placeholder handlers until their workflows are implemented.
+The dispatcher is the sole user-entry routing agent. It sends relevant work to a specialist, defaults ambiguous requests to the product manager, and rejects clearly out-of-scope requests directly. The product manager still runs as a LangChain Deep Agents handler backed by an OpenAI chat model. The remaining specialist roles still use placeholder handlers until their workflows are implemented.
 
 Discord exposes a single public bot identity. Users start work by mentioning the bot or replying to a prior bot message. LangGraph can still hand work across internal agents, but those handoffs are not rendered as separate Discord personas or synthetic in-channel messages.
 
@@ -50,9 +50,9 @@ The runtime flow is:
 
 1. Discord receives a message trigger through a direct mention or reply to a prior bot message.
 2. The Discord adapter normalizes the trigger into a typed dispatch request.
-3. Routing enters the product manager entrypoint while preserving whether the trigger came from a direct mention or reply.
+3. Routing enters the dispatcher entrypoint while preserving whether the trigger came from a direct mention or reply.
 4. The orchestrator resolves the guild-scoped integration connections, expands them into a typed LangGraph tool bundle for the turn, and keeps those live tool objects out of checkpoint state.
-5. LangGraph invokes the internal agents it needs and persists checkpoint state to SQLite.
+5. LangGraph invokes the dispatcher first, then any internal specialists it needs, and persists checkpoint state to SQLite.
 6. Internal handoffs stay inside the orchestration graph instead of being emitted as Discord messages.
 7. The Discord adapter reacts with `:eyes:`, uses an editable placeholder reply for visible progress states such as `Thinking` and tool fetches, keeps Discord's native typing indicator active while the turn runs, and replaces the placeholder with either the final public response or an explicit error state.
 8. Slash-command interaction responses remain limited to `/settings` and other configuration flows.
@@ -160,7 +160,8 @@ This scaffold now covers the first integration-management slice:
 - Credentials are encrypted before storage and decrypted only on the internal server-to-server path.
 - The web frontend provides the initial settings UX for OAuth and API-key providers.
 - Connected provider tools now resolve automatically from hosted MCP servers or direct provider APIs using the stored connection credentials.
-- The product manager path now runs through LangChain Deep Agents with an OpenAI model. The remaining internal roles still use placeholder business logic.
+- The dispatcher now chooses the initial specialist, defaults ambiguous work to the product manager, and rejects out-of-scope requests directly.
+- The product manager path now runs through LangChain Deep Agents with an OpenAI model. The remaining specialist roles still use placeholder business logic.
 - Each Discord-triggered turn now gets a typed integration tool bundle that can be passed directly to LangGraph agents as tools.
 
 See [specs/architecture.md](/home/yiouli/repo/pixie-for-pm/specs/architecture.md), [specs/integration-config.md](/home/yiouli/repo/pixie-for-pm/specs/integration-config.md), and [specs/agent-runtime-tooling.md](/home/yiouli/repo/pixie-for-pm/specs/agent-runtime-tooling.md) for the implementation outline and extension points.

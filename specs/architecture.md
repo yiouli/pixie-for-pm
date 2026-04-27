@@ -4,10 +4,10 @@
 
 The scaffold establishes two coordinated surfaces for a product collaboration system with five internal agent roles:
 
+- dispatcher
 - product manager
 - market analyst
 - user researcher
-- data scientist
 - product designer
 
 The first surface is a single public Discord bot. The second surface is a settings system that lets each Discord server owner connect external systems for the internal agents. The settings SPA is built by Vite into `web/dist` and then served by the FastAPI process.
@@ -16,12 +16,13 @@ The first surface is a single public Discord bot. The second surface is a settin
 
 1. A user explicitly addresses the bot in a guild message by mentioning the bot account or replying to a prior bot message.
 2. The Discord adapter normalizes the trigger into a typed `IncomingDiscordMessage` plus routing reason metadata.
-3. Routing converts the trigger into a `DispatchRequest` that enters the product manager entrypoint.
+3. Routing converts the trigger into a `DispatchRequest` that enters the dispatcher entrypoint.
 4. The orchestrator derives a typed Discord trigger context, resolves the guild's active integrations, and expands them into a request-scoped tool bundle built from `langchain_core` tools.
 5. The LangGraph runtime loads or creates thread state using the configured SQLite checkpoint store.
-6. The selected agent executes with access to the typed trigger context and initialized tool bundle.
-7. If the execution returns handoffs, the graph routes to the next internal agent without emitting a public Discord handoff message.
-8. The current turn’s messages are returned to the Discord transport for publication as a single public bot reply.
+6. The dispatcher either rejects out-of-scope work directly, defaults ambiguous work to the product manager, or hands off to a specialist.
+7. The selected agent executes with access to the typed trigger context and initialized tool bundle.
+8. If the execution returns handoffs, the graph routes to the next internal agent without emitting a public Discord handoff message. Agents can hand off among the specialist roles, but they cannot hand work back to the dispatcher.
+9. The current turn’s messages are returned to the Discord transport for publication as a single public bot reply.
 
 ## Discord Install Flow
 
@@ -77,7 +78,7 @@ Outbound publication:
 
 ## Extension Points
 
-- Replace the remaining placeholder handlers in `pixie_for_pm/agents/registry.py` with real agent implementations.
+- Replace the remaining placeholder specialist handlers in `pixie_for_pm/agents/registry.py` with real agent implementations.
 - Extend the hosted-MCP and API-backed provider runtime layer under `pixie_for_pm/integrations/` while keeping the typed toolset initializer stable.
 - Extend the FastAPI settings layer with live Supabase-backed persistence, token refresh, and provider-specific validation hardening.
 - Enrich the Discord adapter with thread ownership and richer error translation.

@@ -10,6 +10,7 @@ from pixie_for_pm.domain.models import (
     AgentHandoff,
     AgentMessage,
     AgentRole,
+    DispatchRequest,
     IncomingDiscordMessage,
     WorkflowContext,
 )
@@ -63,6 +64,30 @@ async def _market_placeholder(context: WorkflowContext) -> AgentExecution:
     )
 
 
+async def _pm_direct_response(context: WorkflowContext) -> AgentExecution:
+    return AgentExecution(
+        messages=[
+            AgentMessage(
+                agent=AgentRole.PRODUCT_MANAGER,
+                content=f"PM direct response for: {context.user_message}",
+            )
+        ]
+    )
+
+
+async def _invalid_dispatcher_handoff(context: WorkflowContext) -> AgentExecution:
+    return AgentExecution(
+        messages=[],
+        handoffs=[
+            AgentHandoff(
+                source_agent=AgentRole.PRODUCT_MANAGER,
+                target_agent=AgentRole.DISPATCHER,
+                reason="Attempting to re-dispatch.",
+            )
+        ],
+    )
+
+
 class _StaticToolsetInitializer(ToolsetInitializer):
     def __init__(self, toolset: AgentToolset) -> None:
         self.toolset = toolset
@@ -100,8 +125,8 @@ async def _assert_tool_context(context: WorkflowContext) -> AgentExecution:
 async def test_orchestrator_runs_product_manager_deep_agent_and_persists_sqlite_checkpoint(
     tmp_path: Path,
 ) -> None:
-    request = build_dispatch_request(
-        IncomingDiscordMessage(
+    request = DispatchRequest(
+        message=IncomingDiscordMessage(
             discord_message_id=10,
             discord_server_id="discord-server-123",
             channel_id=20,
@@ -110,7 +135,9 @@ async def test_orchestrator_runs_product_manager_deep_agent_and_persists_sqlite_
             content="Help me frame a PM agent product strategy.",
             directly_mentions_bot=True,
             is_reply_to_bot=False,
-        )
+        ),
+        target_agent=AgentRole.PRODUCT_MANAGER,
+        reason="direct_bot_mention",
     )
 
     async with PixieOrchestrator(
@@ -144,17 +171,19 @@ async def test_orchestrator_keeps_handoffs_out_of_the_public_transcript(
         AgentRole.PRODUCT_MANAGER: _pm_with_handoff,
         AgentRole.MARKET_ANALYST: _market_placeholder,
     }
-    request = build_dispatch_request(
-        IncomingDiscordMessage(
+    request = DispatchRequest(
+        message=IncomingDiscordMessage(
             discord_message_id=11,
             discord_server_id="discord-server-456",
             channel_id=21,
             thread_id="discord-thread-456",
             author_id=31,
-            content="Is this market large enough for a vertical product?",
+            content="Help me plan this vertical product and hand off market sizing if needed.",
             directly_mentions_bot=True,
             is_reply_to_bot=False,
-        )
+        ),
+        target_agent=AgentRole.PRODUCT_MANAGER,
+        reason="direct_bot_mention",
     )
 
     async with PixieOrchestrator(
@@ -176,8 +205,8 @@ async def test_orchestrator_keeps_handoffs_out_of_the_public_transcript(
 async def test_orchestrator_initializes_request_scoped_toolset_for_agent_context(
     tmp_path: Path,
 ) -> None:
-    request = build_dispatch_request(
-        IncomingDiscordMessage(
+    request = DispatchRequest(
+        message=IncomingDiscordMessage(
             discord_message_id=12,
             discord_server_id="discord-server-789",
             channel_id=22,
@@ -186,7 +215,9 @@ async def test_orchestrator_initializes_request_scoped_toolset_for_agent_context
             content="Can you use our connected tools?",
             directly_mentions_bot=True,
             is_reply_to_bot=False,
-        )
+        ),
+        target_agent=AgentRole.PRODUCT_MANAGER,
+        reason="direct_bot_mention",
     )
     initializer = _StaticToolsetInitializer(
         AgentToolset(
@@ -223,8 +254,8 @@ async def test_orchestrator_initializes_request_scoped_toolset_for_agent_context
 async def test_orchestrator_emits_progress_updates_for_tool_init_and_handoffs(
     tmp_path: Path,
 ) -> None:
-    request = build_dispatch_request(
-        IncomingDiscordMessage(
+    request = DispatchRequest(
+        message=IncomingDiscordMessage(
             discord_message_id=13,
             discord_server_id="discord-server-999",
             channel_id=23,
@@ -233,7 +264,9 @@ async def test_orchestrator_emits_progress_updates_for_tool_init_and_handoffs(
             content="Can you size this opportunity and route the work?",
             directly_mentions_bot=True,
             is_reply_to_bot=False,
-        )
+        ),
+        target_agent=AgentRole.PRODUCT_MANAGER,
+        reason="direct_bot_mention",
     )
     initializer = _StaticToolsetInitializer(AgentToolset())
     progress_updates: list[str] = []
@@ -263,8 +296,8 @@ async def test_orchestrator_emits_progress_updates_for_tool_init_and_handoffs(
 async def test_orchestrator_emits_internal_product_manager_status_updates(
     tmp_path: Path,
 ) -> None:
-    request = build_dispatch_request(
-        IncomingDiscordMessage(
+    request = DispatchRequest(
+        message=IncomingDiscordMessage(
             discord_message_id=14,
             discord_server_id="discord-server-1000",
             channel_id=24,
@@ -273,7 +306,9 @@ async def test_orchestrator_emits_internal_product_manager_status_updates(
             content="Can you assess this product opportunity?",
             directly_mentions_bot=True,
             is_reply_to_bot=False,
-        )
+        ),
+        target_agent=AgentRole.PRODUCT_MANAGER,
+        reason="direct_bot_mention",
     )
     progress_updates: list[str] = []
 
@@ -301,3 +336,112 @@ async def test_orchestrator_emits_internal_product_manager_status_updates(
         "Product manager is reasoning...",
         "Product manager is drafting the response...",
     ]
+
+
+@pytest.mark.asyncio
+async def test_orchestrator_dispatches_market_requests_to_market_analyst(
+    tmp_path: Path,
+) -> None:
+    request = build_dispatch_request(
+        IncomingDiscordMessage(
+            discord_message_id=15,
+            discord_server_id="discord-server-1001",
+            channel_id=25,
+            thread_id="discord-thread-1001",
+            author_id=34,
+            content="Can you size the TAM and review the competitive landscape?",
+            directly_mentions_bot=True,
+            is_reply_to_bot=False,
+        )
+    )
+
+    async with PixieOrchestrator(
+        checkpoint_path=tmp_path / "dispatcher-market.sqlite",
+        agent_handlers={AgentRole.MARKET_ANALYST: _market_placeholder},
+    ) as orchestrator:
+        result = await orchestrator.dispatch(request)
+
+    assert [message.agent for message in result.transcript] == [
+        AgentRole.MARKET_ANALYST
+    ]
+
+
+@pytest.mark.asyncio
+async def test_orchestrator_dispatches_ambiguous_requests_to_product_manager(
+    tmp_path: Path,
+) -> None:
+    request = build_dispatch_request(
+        IncomingDiscordMessage(
+            discord_message_id=16,
+            discord_server_id="discord-server-1002",
+            channel_id=26,
+            thread_id="discord-thread-1002",
+            author_id=35,
+            content="What should we do next?",
+            directly_mentions_bot=True,
+            is_reply_to_bot=False,
+        )
+    )
+
+    async with PixieOrchestrator(
+        checkpoint_path=tmp_path / "dispatcher-pm.sqlite",
+        agent_handlers={AgentRole.PRODUCT_MANAGER: _pm_direct_response},
+    ) as orchestrator:
+        result = await orchestrator.dispatch(request)
+
+    assert [message.agent for message in result.transcript] == [
+        AgentRole.PRODUCT_MANAGER
+    ]
+
+
+@pytest.mark.asyncio
+async def test_orchestrator_dispatcher_rejects_irrelevant_requests(
+    tmp_path: Path,
+) -> None:
+    request = build_dispatch_request(
+        IncomingDiscordMessage(
+            discord_message_id=17,
+            discord_server_id="discord-server-1003",
+            channel_id=27,
+            thread_id="discord-thread-1003",
+            author_id=36,
+            content="Write me a pancake recipe.",
+            directly_mentions_bot=True,
+            is_reply_to_bot=False,
+        )
+    )
+
+    async with PixieOrchestrator(
+        checkpoint_path=tmp_path / "dispatcher-reject.sqlite",
+    ) as orchestrator:
+        result = await orchestrator.dispatch(request)
+
+    assert [message.agent for message in result.transcript] == [AgentRole.DISPATCHER]
+    assert "product" in result.transcript[0].content.lower()
+
+
+@pytest.mark.asyncio
+async def test_orchestrator_rejects_handoffs_back_to_dispatcher(
+    tmp_path: Path,
+) -> None:
+    request = DispatchRequest(
+        message=IncomingDiscordMessage(
+            discord_message_id=18,
+            discord_server_id="discord-server-1004",
+            channel_id=28,
+            thread_id="discord-thread-1004",
+            author_id=37,
+            content="Plan the next step.",
+            directly_mentions_bot=True,
+            is_reply_to_bot=False,
+        ),
+        target_agent=AgentRole.PRODUCT_MANAGER,
+        reason="direct_bot_mention",
+    )
+
+    async with PixieOrchestrator(
+        checkpoint_path=tmp_path / "dispatcher-invalid-handoff.sqlite",
+        agent_handlers={AgentRole.PRODUCT_MANAGER: _invalid_dispatcher_handoff},
+    ) as orchestrator:
+        with pytest.raises(ValueError, match="dispatcher"):
+            await orchestrator.dispatch(request)

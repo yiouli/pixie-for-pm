@@ -16,7 +16,7 @@ def test_routes_direct_bot_mentions_to_the_product_manager_entrypoint() -> None:
         )
     )
 
-    assert request.target_agent is AgentRole.PRODUCT_MANAGER
+    assert request.target_agent is AgentRole.DISPATCHER
     assert request.reason == "direct_bot_mention"
 
 
@@ -34,7 +34,7 @@ def test_routes_bot_replies_back_to_the_product_manager_entrypoint() -> None:
         )
     )
 
-    assert request.target_agent is AgentRole.PRODUCT_MANAGER
+    assert request.target_agent is AgentRole.DISPATCHER
     assert request.reason == "reply_to_bot"
 
 
@@ -52,5 +52,5 @@ def test_routes_other_messages_to_the_product_manager_entrypoint() -> None:
         )
     )
 
-    assert request.target_agent is AgentRole.PRODUCT_MANAGER
+    assert request.target_agent is AgentRole.DISPATCHER
     assert request.reason == "discord_message"

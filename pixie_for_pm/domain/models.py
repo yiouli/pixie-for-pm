@@ -39,10 +39,10 @@ async def emit_response_chunk(
 
 
 class AgentRole(StrEnum):
+    DISPATCHER = "dispatcher"
     PRODUCT_MANAGER = "product_manager"
     MARKET_ANALYST = "market_analyst"
     USER_RESEARCHER = "user_researcher"
-    DATA_SCIENTIST = "data_scientist"
     PRODUCT_DESIGNER = "product_designer"
 
     @property

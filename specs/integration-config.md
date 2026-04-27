@@ -288,6 +288,8 @@ PROVIDERS: dict[str, ProviderConfig] = { ... }
 | **PostHog**   | API Key   | `api_key`, `project_id`, `host`          | Personal API key from project settings |
 | **Fireflies** | API Key   | `api_key`                                | fireflies.ai/account                   |
 
+Notion-specific OAuth behavior: the authorize URL must include `owner=user`, and the token exchange must use HTTP Basic authentication with a JSON request body.
+
 ### 3.1 OAuth2 Flow (Notion, GitHub, Vercel, Airtable)
 
 ```text
@@ -296,9 +298,11 @@ PROVIDERS: dict[str, ProviderConfig] = { ... }
 3. Server validates user owns this server
 4. Server generates HMAC-signed state param (encodes server_id + user_id + random nonce)
 5. Server 302-redirects to provider's authorize URL with client_id, redirect_uri, state, scopes
+  - Notion additionally requires `owner=user` on the authorize URL.
 6. User authorizes in provider
 7. Provider redirects to: GET /api/connections/oauth/callback?code=...&state=...
 8. Server validates state signature, exchanges code for tokens
+  - Notion exchanges the code with an HTTP Basic `Authorization` header and a JSON request body.
 9. Server encrypts tokens with Fernet, upserts into connections table
 10. Server redirects to: {WEB_APP_URL}/settings?server_id=...&connected={provider}
 ```

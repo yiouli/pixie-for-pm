@@ -144,6 +144,7 @@ def _agent_node(
                 toolset=toolset,
             )
         )
+        _validate_handoffs(role, execution.handoffs)
         serialized_messages = _serialize_messages(execution.messages)
         return {
             "transcript": serialized_messages,
@@ -155,22 +156,30 @@ def _agent_node(
 
 
 def _route_current_agent(state: WorkflowState) -> Literal[
+    "dispatcher",
     "product_manager",
     "market_analyst",
     "user_researcher",
-    "data_scientist",
     "product_designer",
 ]:
     return cast(
         Literal[
+            "dispatcher",
             "product_manager",
             "market_analyst",
             "user_researcher",
-            "data_scientist",
             "product_designer",
         ],
         state["current_agent"],
     )
+
+
+def _validate_handoffs(role: AgentRole, handoffs: list[AgentHandoff]) -> None:
+    for handoff in handoffs:
+        if handoff.source_agent is not role:
+            raise ValueError("Agent handoff source must match the current agent.")
+        if handoff.target_agent is AgentRole.DISPATCHER:
+            raise ValueError("Agents cannot hand off work back to dispatcher.")
 
 
 def _route_after_agent(state: WorkflowState) -> str:

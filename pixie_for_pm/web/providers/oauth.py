@@ -173,6 +173,8 @@ class HttpOAuthService:
         query: dict[str, str] = {"client_id": client_id, "state": state}
         if self._settings.oauth_callback_url is not None:
             query["redirect_uri"] = self._settings.oauth_callback_url
+        if provider == "notion":
+            query["owner"] = "user"
         if config.scopes:
             query["scope"] = " ".join(config.scopes)
         query["response_type"] = "code"
@@ -193,21 +195,35 @@ class HttpOAuthService:
                 f"Missing OAuth credentials for provider '{provider}'."
             )
 
-        data = {
+        payload = {
             "grant_type": "authorization_code",
             "code": code,
-            "client_id": client_id,
-            "client_secret": client_secret,
         }
         if self._settings.oauth_callback_url is not None:
-            data["redirect_uri"] = self._settings.oauth_callback_url
+            payload["redirect_uri"] = self._settings.oauth_callback_url
 
-        async with httpx.AsyncClient(timeout=15.0) as client:
-            response = await client.post(
-                config.oauth_token_url,
-                data=data,
-                headers={"Accept": "application/json"},
-            )
+        headers = {"Accept": "application/json"}
+        if provider == "notion":
+            basic_auth = base64.b64encode(
+                f"{client_id}:{client_secret}".encode()
+            ).decode()
+            headers["Content-Type"] = "application/json"
+            headers["Authorization"] = f"Basic {basic_auth}"
+            async with httpx.AsyncClient(timeout=15.0) as client:
+                response = await client.post(
+                    config.oauth_token_url,
+                    json=payload,
+                    headers=headers,
+                )
+        else:
+            payload["client_id"] = client_id
+            payload["client_secret"] = client_secret
+            async with httpx.AsyncClient(timeout=15.0) as client:
+                response = await client.post(
+                    config.oauth_token_url,
+                    data=payload,
+                    headers=headers,
+                )
         if response.status_code >= 400:
             raise OAuthProviderError(
                 f"OAuth token exchange failed for provider '{provider}'."
