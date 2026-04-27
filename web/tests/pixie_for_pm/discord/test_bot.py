@@ -393,11 +393,13 @@ class _FakeOrchestrator:
         events: list[str] | None = None,
         error: Exception | None = None,
         transcript: list[AgentMessage] | None = None,
+        response_deltas: list[str] | None = None,
     ) -> None:
         self.requests: list[DispatchRequest] = []
         self.events = events if events is not None else []
         self.status_updates: list[str] = []
         self.error = error
+        self.response_deltas = response_deltas or []
         self.transcript = transcript or [
             AgentMessage(
                 agent=AgentRole.PRODUCT_MANAGER,
@@ -410,12 +412,16 @@ class _FakeOrchestrator:
         request: DispatchRequest,
         *,
         status_emitter: Callable[[str], Awaitable[None]] | None = None,
+        response_emitter: Callable[[str], Awaitable[None]] | None = None,
     ) -> object:
         self.requests.append(request)
         self.events.append("dispatch")
         if status_emitter is not None:
             await status_emitter("Analyzing request...")
             self.status_updates.append("Analyzing request...")
+        if response_emitter is not None:
+            for delta in self.response_deltas:
+                await response_emitter(delta)
         if self.error is not None:
             raise self.error
         return SimpleNamespace(transcript=self.transcript)
@@ -676,11 +682,80 @@ async def test_progress_reporter_splits_responses_at_the_default_discord_limit()
 
     assert len(response_channel.sent_messages) == 2
     assert len(response_channel.sent_messages[0].edits[-1]) <= 2000
-    assert any(
-        edit.endswith("(cont.)") for edit in response_channel.sent_messages[0].edits
-    )
     assert response_channel.sent_messages[0].edits[-1] == f"{natural_break}."
     assert response_channel.sent_messages[1].content == "Second chunk starts here."
+
+
+@pytest.mark.asyncio
+async def test_progress_reporter_streams_partial_content_before_final_publish() -> None:
+    events: list[str] = []
+    source_message = _FakeDiscordMessage(
+        message_id=18,
+        content="status",
+        author_id=42,
+        channel=_FakeChannel(22, events=events),
+        guild_id=99,
+        events=events,
+    )
+    response_channel = _FakeChannel(55, events=events)
+    reporter = _DiscordProgressReporter(
+        source_message=cast(discord.Message, source_message),
+        response_channel=response_channel,
+    )
+
+    await reporter.start()
+    await reporter.stream_content("A" * 300)
+    await reporter.stream_content("B" * 300)
+
+    status_message = response_channel.sent_messages[0]
+    assert any(edit.endswith("(cont.)") for edit in status_message.edits)
+    assert status_message.edits[-1].endswith("(cont.)")
+
+    await reporter.publish_transcript(
+        [
+            AgentMessage(
+                agent=AgentRole.PRODUCT_MANAGER,
+                content=("A" * 300) + ("B" * 300),
+            )
+        ]
+    )
+
+    assert status_message.edits[-1] == ("A" * 300) + ("B" * 300)
+
+
+@pytest.mark.asyncio
+async def test_progress_reporter_rolls_over_to_follow_up_while_streaming() -> None:
+    events: list[str] = []
+    source_message = _FakeDiscordMessage(
+        message_id=19,
+        content="status",
+        author_id=42,
+        channel=_FakeChannel(22, events=events),
+        guild_id=99,
+        events=events,
+    )
+    response_channel = _FakeChannel(55, events=events)
+    reporter = _DiscordProgressReporter(
+        source_message=cast(discord.Message, source_message),
+        response_channel=response_channel,
+    )
+
+    original_limit = bot_module.DISCORD_MESSAGE_LIMIT
+    bot_module.DISCORD_MESSAGE_LIMIT = 80
+    try:
+        await reporter.start()
+        await reporter.stream_content("First section stays together and ends cleanly.\n\n")
+        await reporter.stream_content(
+            "Second section keeps streaming with more detail than fits in one chunk."
+        )
+
+        assert len(response_channel.sent_messages) == 2
+        assert response_channel.sent_messages[0].edits[-1] == (
+            "First section stays together and ends cleanly."
+        )
+        assert response_channel.sent_messages[1].content.endswith("(cont.)")
+    finally:
+        bot_module.DISCORD_MESSAGE_LIMIT = original_limit
 
 
 @pytest.mark.asyncio
@@ -810,7 +885,6 @@ async def test_long_transcript_is_split_across_messages_at_natural_breaks(
     created_thread = message.created_threads[0]
     first_reply = created_thread.sent_messages[0]
     second_reply = created_thread.sent_messages[1]
-    assert any(edit.endswith("(cont.)") for edit in first_reply.edits)
     assert len(first_reply.edits[0]) <= 80
     assert first_reply.edits[-1] == "First section stays together and ends cleanly."
     assert "Second section" not in first_reply.edits[-1]

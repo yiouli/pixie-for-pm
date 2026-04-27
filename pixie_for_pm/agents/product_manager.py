@@ -6,13 +6,14 @@ from typing import Any, cast
 from deepagents import create_deep_agent
 from langchain.chat_models import init_chat_model
 from langchain_core.language_models.chat_models import BaseChatModel
-from langchain_core.messages import AIMessage, BaseMessage, HumanMessage
+from langchain_core.messages import AIMessage, AIMessageChunk, BaseMessage, HumanMessage
 
 from pixie_for_pm.domain.models import (
     AgentExecution,
     AgentMessage,
     AgentRole,
     WorkflowContext,
+    emit_response_chunk,
     emit_status_update,
 )
 
@@ -80,12 +81,16 @@ async def _invoke_agent_with_status_events(
     role: AgentRole,
     inputs: dict[str, object],
 ) -> dict[str, object]:
-    if context.status_emitter is None:
+    if context.status_emitter is None and context.response_emitter is None:
         return cast(dict[str, object], await agent.ainvoke(cast(Any, inputs)))
 
     final_output: dict[str, object] | None = None
     last_status: str | None = None
     async for event in agent.astream_events(cast(Any, inputs), version="v2"):
+        text_delta = _stream_text_delta(event)
+        if text_delta is not None:
+            await emit_response_chunk(context.response_emitter, text_delta)
+
         status = _status_for_agent_event(event, role=role)
         if status is not None and status != last_status:
             await emit_status_update(context.status_emitter, status)
@@ -107,6 +112,28 @@ async def _invoke_agent_with_status_events(
         raise RuntimeError("Product manager agent produced no final output.")
 
     return final_output
+
+
+def _stream_text_delta(event: Mapping[str, object]) -> str | None:
+    if event.get("event") != "on_chat_model_stream":
+        return None
+
+    data = event.get("data")
+    if not isinstance(data, dict):
+        return None
+
+    chunk = data.get("chunk")
+    if not isinstance(chunk, AIMessageChunk):
+        return None
+
+    if chunk.tool_call_chunks:
+        return None
+
+    text_delta = _coerce_text_content(chunk.content, strip=False)
+    if text_delta == "":
+        return None
+
+    return text_delta
 
 
 def _status_for_agent_event(
@@ -132,7 +159,7 @@ def _status_for_agent_event(
             return f"{subject} is preparing to use {tool_name}..."
         return f"{subject} is preparing to use a tool..."
 
-    if _coerce_text_content(output_message.content) != "":
+    if _coerce_text_content(output_message.content, strip=True) != "":
         return f"{subject} is drafting the response..."
 
     return None
@@ -183,27 +210,29 @@ def _build_messages(context: WorkflowContext) -> list[BaseMessage]:
 def _extract_final_response_text(messages: Sequence[BaseMessage]) -> str:
     for message in reversed(messages):
         if isinstance(message, AIMessage):
-            content = _coerce_text_content(message.content)
+            content = _coerce_text_content(message.content, strip=True)
             if content != "":
                 return content
     raise RuntimeError("Product manager agent produced no user-visible response.")
 
 
-def _coerce_text_content(content: object) -> str:
+def _coerce_text_content(content: object, *, strip: bool) -> str:
     if isinstance(content, str):
-        return content.strip()
+        return content.strip() if strip else content
     if isinstance(content, list):
         text_parts: list[str] = []
         for item in content:
             if isinstance(item, str):
-                stripped = item.strip()
-                if stripped != "":
-                    text_parts.append(stripped)
+                normalized = item.strip() if strip else item
+                if normalized != "":
+                    text_parts.append(normalized)
             elif isinstance(item, dict):
                 text_value = item.get("text")
                 if isinstance(text_value, str):
-                    stripped = text_value.strip()
-                    if stripped != "":
-                        text_parts.append(stripped)
-        return "\n".join(text_parts).strip()
+                    normalized = text_value.strip() if strip else text_value
+                    if normalized != "":
+                        text_parts.append(normalized)
+        if strip:
+            return "\n".join(text_parts).strip()
+        return "".join(text_parts)
     return ""

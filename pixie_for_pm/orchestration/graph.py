@@ -14,6 +14,7 @@ from pixie_for_pm.domain.models import (
     AgentMessage,
     AgentRole,
     DispatchRequest,
+    ResponseEmitter,
     StatusEmitter,
     WorkflowContext,
     emit_status_update,
@@ -104,6 +105,7 @@ def _to_context(
     *,
     trigger: DiscordTriggerContext,
     status_emitter: StatusEmitter | None,
+    response_emitter: ResponseEmitter | None,
     toolset: AgentToolset,
 ) -> WorkflowContext:
     return WorkflowContext(
@@ -114,6 +116,7 @@ def _to_context(
         trigger,
         toolset,
         status_emitter,
+        response_emitter,
     )
 
 
@@ -123,6 +126,7 @@ def _agent_node(
     *,
     trigger: DiscordTriggerContext,
     status_emitter: StatusEmitter | None,
+    response_emitter: ResponseEmitter | None,
     toolset: AgentToolset,
 ) -> AgentNode:
     async def _run_agent(state: WorkflowState) -> dict[str, object]:
@@ -136,6 +140,7 @@ def _agent_node(
                 role=role,
                 trigger=trigger,
                 status_emitter=status_emitter,
+                response_emitter=response_emitter,
                 toolset=toolset,
             )
         )
@@ -206,6 +211,7 @@ def build_workflow_graph(
     *,
     trigger: DiscordTriggerContext,
     status_emitter: StatusEmitter | None = None,
+    response_emitter: ResponseEmitter | None = None,
     toolset: AgentToolset,
 ) -> AsyncWorkflowGraph:
     builder = StateGraph(WorkflowState)
@@ -222,6 +228,7 @@ def build_workflow_graph(
                     handlers=handlers,
                     trigger=trigger,
                     status_emitter=status_emitter,
+                    response_emitter=response_emitter,
                     toolset=toolset,
                 ),
             ),

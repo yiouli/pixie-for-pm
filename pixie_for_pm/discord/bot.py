@@ -26,6 +26,7 @@ from pixie_for_pm.orchestration.runtime import PixieOrchestrator
 logger = logging.getLogger(__name__)
 
 DISCORD_MESSAGE_LIMIT = 2000
+DISCORD_STREAM_UPDATE_INTERVAL = 500
 DISCORD_CONTINUATION_SUFFIX = " (cont.)"
 DISCORD_ERROR_TITLE = "Pixie couldn't complete that request"
 DISCORD_STATUS_TITLE = "Pixie is working"
@@ -59,8 +60,13 @@ def compose_public_reply(transcript: Sequence[AgentMessage]) -> str:
     return "\n\n".join(messages)
 
 
-def split_discord_response(content: str, *, limit: int | None = None) -> list[str]:
-    normalized_content = content.strip()
+def split_discord_response(
+    content: str,
+    *,
+    limit: int | None = None,
+    trim_whitespace: bool = True,
+) -> list[str]:
+    normalized_content = content.strip() if trim_whitespace else content
     if normalized_content == "":
         return []
 
@@ -152,6 +158,8 @@ class _DiscordProgressReporter:
         self._follow_up_messages: list[object] = []
         self._typing_task: asyncio.Task[None] | None = None
         self._last_status: str | None = None
+        self._stream_content: str = ""
+        self._stream_rendered_length = 0
 
     async def start(self) -> None:
         await self._add_eyes_reaction()
@@ -165,6 +173,9 @@ class _DiscordProgressReporter:
 
         self._last_status = normalized_status
         await self._trigger_typing_once()
+        if self._stream_content != "":
+            return
+
         status_embed = _status_embed(normalized_status)
         if self._status_message is None:
             self._status_message = await self._send_response(
@@ -175,31 +186,32 @@ class _DiscordProgressReporter:
 
         await self._edit_status_message(normalized_status, embed=status_embed)
 
+    async def stream_content(self, delta: str) -> None:
+        if delta == "":
+            return
+
+        previous_chunk_count = len(
+            split_discord_response(self._stream_content, trim_whitespace=False)
+        )
+        self._stream_content += delta
+        current_chunk_count = len(
+            split_discord_response(self._stream_content, trim_whitespace=False)
+        )
+        should_render = (
+            current_chunk_count > previous_chunk_count
+            or len(self._stream_content) - self._stream_rendered_length
+            >= DISCORD_STREAM_UPDATE_INTERVAL
+        )
+        if should_render:
+            await self._render_stream_content(final=False)
+
     async def publish_transcript(self, transcript: Sequence[AgentMessage]) -> None:
         final_content = compose_public_reply(transcript)
-        chunks = split_discord_response(final_content)
-        if not chunks:
+        if final_content == "":
             raise RuntimeError("Orchestrator returned no user-visible messages.")
 
-        first_chunk = (
-            self._with_continuation(chunks[0]) if len(chunks) > 1 else chunks[0]
-        )
-        if self._status_message is None:
-            self._status_message = await self._send_response(first_chunk)
-        else:
-            await self._edit_status_message(first_chunk, embed=None)
-
-        previous_message = self._status_message
-        previous_chunk = chunks[0]
-        for index, chunk in enumerate(chunks[1:], start=1):
-            follow_up_content = (
-                self._with_continuation(chunk) if index < len(chunks) - 1 else chunk
-            )
-            follow_up_message = await self._send_follow_up(follow_up_content)
-            await self._edit_message(previous_message, previous_chunk)
-            self._follow_up_messages.append(follow_up_message)
-            previous_message = follow_up_message
-            previous_chunk = chunk
+        self._stream_content = final_content
+        await self._render_stream_content(final=True)
 
         self._last_status = final_content
 
@@ -328,6 +340,36 @@ class _DiscordProgressReporter:
         await edit_message(content=content, embed=embed)
         return True
 
+    async def _render_stream_content(self, *, final: bool) -> None:
+        chunks = split_discord_response(
+            self._stream_content,
+            trim_whitespace=False,
+        )
+        if not chunks:
+            return
+
+        rendered_chunks = list(chunks)
+        if not final:
+            rendered_chunks[-1] = self._with_continuation(rendered_chunks[-1].rstrip())
+
+        for index, content in enumerate(rendered_chunks):
+            if index == 0:
+                if self._status_message is None:
+                    self._status_message = await self._send_response(content)
+                else:
+                    await self._edit_status_message(content, embed=None)
+                continue
+
+            message_index = index - 1
+            if message_index < len(self._follow_up_messages):
+                await self._edit_message(self._follow_up_messages[message_index], content)
+                continue
+
+            follow_up_message = await self._send_follow_up(content)
+            self._follow_up_messages.append(follow_up_message)
+
+        self._stream_rendered_length = len(self._stream_content)
+
     def _with_continuation(self, content: str) -> str:
         return f"{content}{DISCORD_CONTINUATION_SUFFIX}"
 
@@ -421,6 +463,7 @@ class PixieDiscordBot(discord.Client):
             result = await self._orchestrator.dispatch(
                 dispatch_request,
                 status_emitter=progress_reporter.emit,
+                response_emitter=progress_reporter.stream_content,
             )
             await progress_reporter.publish_transcript(result.transcript)
         except Exception:

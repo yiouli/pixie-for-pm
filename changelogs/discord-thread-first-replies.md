@@ -12,6 +12,7 @@
 - render in-progress status updates as an orange Discord embed so working-state messages are visually distinct from final answers
 - use a temporary `(cont.)` marker for partial chunks and remove it from the prior message once the next continuation message is sent
 - propagate internal product-manager model lifecycle events into Discord status updates so long-running turns advance beyond the initial agent-routing message
+- stream product-manager content deltas into Discord during generation, flushing partial message edits roughly every 500 characters and rolling over to a follow-up message immediately when a chunk hits Discord's limit
 
 ## Why
 

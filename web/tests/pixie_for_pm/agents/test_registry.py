@@ -58,6 +58,41 @@ async def test_product_manager_handler_returns_deep_agent_response() -> None:
 
 
 @pytest.mark.asyncio
+async def test_product_manager_handler_emits_streamed_content_deltas() -> None:
+    streamed_chunks: list[str] = []
+    handler = build_product_manager_handler(
+        model=_ToolCallingFakeListChatModel(
+            responses=[
+                "PM_AGENT_OK Live streamed response for Discord delivery."
+            ]
+        )
+    )
+
+    execution = await handler(
+        WorkflowContext(
+            thread_key="discord-thread-1",
+            current_agent=AgentRole.PRODUCT_MANAGER,
+            user_message="Can you help me test streamed Discord output?",
+            transcript=(),
+            trigger=DiscordTriggerContext(
+                discord_server_id="discord-server-1",
+                discord_user_id="user-1",
+                channel_id=10,
+                thread_id="discord-thread-1",
+                message_id=99,
+                thread_key="discord-thread-1",
+                dispatch_reason="direct_bot_mention",
+            ),
+            toolset=AgentToolset(),
+            response_emitter=streamed_chunks.append,
+        )
+    )
+
+    assert "".join(streamed_chunks) == execution.messages[0].content
+    assert streamed_chunks != []
+
+
+@pytest.mark.asyncio
 async def test_default_handlers_keep_placeholder_contract_for_non_pm_roles() -> None:
     handler = default_agent_handlers()[AgentRole.MARKET_ANALYST]
 

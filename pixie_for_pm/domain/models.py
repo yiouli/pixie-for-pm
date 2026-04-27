@@ -11,6 +11,7 @@ if TYPE_CHECKING:
 
 
 StatusEmitter = Callable[[str], Awaitable[None] | None]
+ResponseEmitter = Callable[[str], Awaitable[None] | None]
 
 
 async def emit_status_update(
@@ -21,6 +22,18 @@ async def emit_status_update(
         return
 
     maybe_awaitable = status_emitter(status)
+    if inspect.isawaitable(maybe_awaitable):
+        await maybe_awaitable
+
+
+async def emit_response_chunk(
+    response_emitter: ResponseEmitter | None,
+    chunk: str,
+) -> None:
+    if response_emitter is None or chunk == "":
+        return
+
+    maybe_awaitable = response_emitter(chunk)
     if inspect.isawaitable(maybe_awaitable):
         await maybe_awaitable
 
@@ -84,6 +97,7 @@ class WorkflowContext:
     trigger: DiscordTriggerContext
     toolset: AgentToolset
     status_emitter: StatusEmitter | None = None
+    response_emitter: ResponseEmitter | None = None
 
 
 @dataclass(frozen=True)

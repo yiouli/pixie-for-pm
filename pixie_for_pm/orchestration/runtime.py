@@ -12,6 +12,7 @@ from pixie_for_pm.domain.models import (
     AgentRole,
     DispatchRequest,
     OrchestrationResult,
+    ResponseEmitter,
     StatusEmitter,
     emit_status_update,
 )
@@ -68,6 +69,7 @@ class PixieOrchestrator:
         request: DispatchRequest,
         *,
         status_emitter: StatusEmitter | None = None,
+        response_emitter: ResponseEmitter | None = None,
     ) -> OrchestrationResult:
         if self._checkpointer is None:
             raise RuntimeError(
@@ -93,6 +95,7 @@ class PixieOrchestrator:
             checkpointer=self._checkpointer,
             trigger=trigger,
             status_emitter=status_emitter,
+            response_emitter=response_emitter,
             toolset=toolset,
         )
         state = build_initial_state(request)
