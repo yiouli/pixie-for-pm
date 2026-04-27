@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import base64
+import hashlib
 from typing import Any
 from urllib.parse import parse_qs, urlsplit
 
@@ -18,6 +19,17 @@ def _settings() -> dict[str, str]:
         "NOTION_CLIENT_ID": "notion-client-id",
         "NOTION_CLIENT_SECRET": "notion-client-secret",
     }
+
+
+def _vercel_settings() -> dict[str, str]:
+    settings = _settings()
+    settings.update(
+        {
+            "VERCEL_CLIENT_ID": "vercel-client-id",
+            "VERCEL_CLIENT_SECRET": "vercel-client-secret",
+        }
+    )
+    return settings
 
 
 def test_notion_authorize_url_includes_required_owner_parameter() -> None:
@@ -102,3 +114,98 @@ async def test_notion_token_exchange_uses_basic_auth_and_json_body(
         "Authorization": "Basic "
         + base64.b64encode(b"notion-client-id:notion-client-secret").decode(),
     }
+
+
+def test_vercel_authorize_url_includes_pkce_challenge() -> None:
+    service = HttpOAuthService(load_settings(_vercel_settings()))
+    verifier = "vercel-test-verifier"
+
+    authorize_url = service.get_authorize_url(
+        "vercel",
+        "signed-state",
+        code_challenge=base64.urlsafe_b64encode(
+            hashlib.sha256(verifier.encode()).digest()
+        )
+        .decode()
+        .rstrip("="),
+    )
+    query = parse_qs(urlsplit(authorize_url).query)
+
+    assert query["client_id"] == ["vercel-client-id"]
+    assert query["redirect_uri"] == [
+        "https://api.pixie.test/api/connections/oauth/callback"
+    ]
+    assert query["state"] == ["signed-state"]
+    assert query["code_challenge_method"] == ["S256"]
+    assert "code_challenge" in query
+
+
+@pytest.mark.asyncio
+async def test_vercel_token_exchange_uses_login_endpoint_and_pkce_verifier(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    service = HttpOAuthService(load_settings(_vercel_settings()))
+    captured: dict[str, Any] = {}
+
+    class _FakeResponse:
+        status_code = 200
+
+        def json(self) -> dict[str, str]:
+            return {
+                "access_token": "vercel-access-token",
+                "refresh_token": "vercel-refresh-token",
+                "token_type": "bearer",
+            }
+
+    class _FakeAsyncClient:
+        def __init__(self, *, timeout: float) -> None:
+            assert timeout == 15.0
+
+        async def __aenter__(self) -> Any:
+            return self
+
+        async def __aexit__(self, exc_type: object, exc: object, tb: object) -> None:
+            return None
+
+        async def post(
+            self,
+            url: str,
+            *,
+            data: dict[str, str] | None = None,
+            json: dict[str, str] | None = None,
+            headers: dict[str, str],
+        ) -> _FakeResponse:
+            captured["url"] = url
+            captured["data"] = data
+            captured["json"] = json
+            captured["headers"] = headers
+            return _FakeResponse()
+
+    monkeypatch.setattr(
+        "pixie_for_pm.web.providers.oauth.httpx.AsyncClient",
+        _FakeAsyncClient,
+    )
+
+    payload, scopes = await service.exchange_code(
+        "vercel",
+        "temporary-code",
+        code_verifier="vercel-test-verifier",
+    )
+
+    assert payload == {
+        "access_token": "vercel-access-token",
+        "refresh_token": "vercel-refresh-token",
+        "token_type": "bearer",
+    }
+    assert scopes is None
+    assert captured["url"] == "https://api.vercel.com/login/oauth/token"
+    assert captured["json"] is None
+    assert captured["data"] == {
+        "grant_type": "authorization_code",
+        "code": "temporary-code",
+        "redirect_uri": "https://api.pixie.test/api/connections/oauth/callback",
+        "client_id": "vercel-client-id",
+        "client_secret": "vercel-client-secret",
+        "code_verifier": "vercel-test-verifier",
+    }
+    assert captured["headers"] == {"Accept": "application/json"}

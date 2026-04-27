@@ -1,3 +1,7 @@
+from typing import Any
+from urllib.parse import parse_qs, urlsplit
+
+import pytest
 from fastapi.testclient import TestClient
 
 from pixie_for_pm.config.settings import load_settings
@@ -5,6 +9,7 @@ from pixie_for_pm.web.app import create_app
 from pixie_for_pm.web.auth import AuthenticatedUser, get_current_user
 from pixie_for_pm.web.encryption import CredentialCipher
 from pixie_for_pm.web.providers.api_key import MappingApiKeyValidator
+from pixie_for_pm.web.providers.discord_guilds import StaticDiscordGuildService
 from pixie_for_pm.web.providers.oauth import StaticOAuthService
 from pixie_for_pm.web.store import InMemoryConnectionStore
 
@@ -23,6 +28,19 @@ def _settings() -> dict[str, str]:
         "GITHUB_CLIENT_ID": "github-id",
         "GITHUB_CLIENT_SECRET": "github-secret",
     }
+
+
+def _oauth_settings() -> dict[str, str]:
+    settings = _settings()
+    settings.update(
+        {
+            "WEB_APP_URL": "http://localhost:8000",
+            "OAUTH_CALLBACK_URL": "http://localhost:8000/api/connections/oauth/callback",
+            "VERCEL_CLIENT_ID": "vercel-id",
+            "VERCEL_CLIENT_SECRET": "vercel-secret",
+        }
+    )
+    return settings
 
 
 def _make_store() -> InMemoryConnectionStore:
@@ -150,6 +168,38 @@ def test_oauth_authorize_and_callback_store_tokens_and_redirect_back_to_settings
     }
 
 
+def test_vercel_authorize_sets_pkce_cookie_and_challenge() -> None:
+    store = _make_store()
+    app = create_app(
+        load_settings(_oauth_settings()),
+        store=store,
+        oauth_service=StaticOAuthService(
+            authorize_urls={"vercel": "https://vercel.com/oauth/authorize"},
+            token_payloads={
+                "vercel": {
+                    "access_token": "oauth-access-token",
+                    "refresh_token": "oauth-refresh-token",
+                    "token_type": "bearer",
+                }
+            },
+        ),
+    )
+    app.dependency_overrides[get_current_user] = lambda: _OWNER
+    client = TestClient(app)
+    client.post("/api/servers/server-123/claim")
+
+    authorize_response = client.get(
+        "/api/connections/vercel/authorize?server_id=server-123&response_mode=json",
+        follow_redirects=False,
+    )
+    query = parse_qs(urlsplit(authorize_response.json()["authorize_url"]).query)
+
+    assert authorize_response.status_code == 200
+    assert query["code_challenge_method"] == ["S256"]
+    assert "code_challenge" in query
+    assert "_oauth_pkce_verifier" in authorize_response.headers.get("set-cookie", "")
+
+
 def test_disconnect_removes_credentials_from_store() -> None:
     store = _make_store()
     client = _client(store)
@@ -172,3 +222,96 @@ def test_disconnect_removes_credentials_from_store() -> None:
 
     assert delete_response.status_code == 204
     assert connection is None
+
+
+@pytest.mark.asyncio
+async def test_oauth_flow_prefers_request_host_over_localhost_config(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    store = _make_store()
+    app = create_app(
+        load_settings(_oauth_settings()),
+        store=store,
+        discord_guild_service=StaticDiscordGuildService(),
+    )
+    app.dependency_overrides[get_current_user] = lambda: _OWNER
+    captured: dict[str, Any] = {}
+
+    class _FakeResponse:
+        status_code = 200
+
+        def json(self) -> dict[str, str]:
+            return {
+                "access_token": "vercel-access-token",
+                "refresh_token": "vercel-refresh-token",
+                "token_type": "bearer",
+            }
+
+    class _FakeAsyncClient:
+        def __init__(self, *, timeout: float) -> None:
+            assert timeout == 15.0
+
+        async def __aenter__(self) -> Any:
+            return self
+
+        async def __aexit__(self, exc_type: object, exc: object, tb: object) -> None:
+            return None
+
+        async def post(
+            self,
+            url: str,
+            *,
+            data: dict[str, str] | None = None,
+            json: dict[str, str] | None = None,
+            headers: dict[str, str],
+        ) -> _FakeResponse:
+            captured["url"] = url
+            captured["data"] = data
+            captured["json"] = json
+            captured["headers"] = headers
+            return _FakeResponse()
+
+    monkeypatch.setattr(
+        "pixie_for_pm.web.providers.oauth.httpx.AsyncClient",
+        _FakeAsyncClient,
+    )
+
+    client = TestClient(app, base_url="https://pixie-preview.vercel.app")
+    client.post("/api/servers/server-123/claim")
+
+    authorize_response = client.get(
+        "/api/connections/vercel/authorize?server_id=server-123",
+        follow_redirects=False,
+    )
+
+    authorize_query = parse_qs(urlsplit(authorize_response.headers["Location"]).query)
+    state = authorize_query["state"][0]
+    code_verifier = client.cookies.get("_oauth_pkce_verifier")
+
+    callback_response = client.get(
+        "/api/connections/oauth/callback",
+        params={
+            "code": "code-123",
+            "state": state,
+        },
+        follow_redirects=False,
+    )
+
+    assert authorize_response.status_code == 302
+    assert authorize_query["redirect_uri"] == [
+        "https://pixie-preview.vercel.app/api/connections/oauth/callback"
+    ]
+    assert captured["url"] == "https://api.vercel.com/login/oauth/token"
+    assert captured["data"] == {
+        "grant_type": "authorization_code",
+        "code": "code-123",
+        "redirect_uri": "https://pixie-preview.vercel.app/api/connections/oauth/callback",
+        "client_id": "vercel-id",
+        "client_secret": "vercel-secret",
+        "code_verifier": code_verifier,
+    }
+    assert callback_response.status_code == 302
+    assert callback_response.headers["Location"] == (
+        "https://pixie-preview.vercel.app/settings"
+        "?server_id=server-123&connected=vercel"
+    )

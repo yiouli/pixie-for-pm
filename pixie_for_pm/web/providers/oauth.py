@@ -36,13 +36,32 @@ class OAuthService(Protocol):
 
     def parse_state(self, state: str) -> OAuthState: ...
 
-    def get_authorize_url(self, provider: str, state: str) -> str: ...
+    def get_authorize_url(
+        self,
+        provider: str,
+        state: str,
+        *,
+        redirect_uri: str | None = None,
+        code_challenge: str | None = None,
+    ) -> str: ...
 
     async def exchange_code(
         self,
         provider: str,
         code: str,
+        *,
+        redirect_uri: str | None = None,
+        code_verifier: str | None = None,
     ) -> tuple[dict[str, str], list[str] | None]: ...
+
+
+def generate_pkce_code_verifier() -> str:
+    return token_urlsafe(64)
+
+
+def build_pkce_code_challenge(code_verifier: str) -> str:
+    digest = hashlib.sha256(code_verifier.encode()).digest()
+    return base64.urlsafe_b64encode(digest).decode().rstrip("=")
 
 
 class OAuthStateCodec:
@@ -117,15 +136,32 @@ class StaticOAuthService:
     def parse_state(self, state: str) -> OAuthState:
         return self._codec.decode(state)
 
-    def get_authorize_url(self, provider: str, state: str) -> str:
+    def get_authorize_url(
+        self,
+        provider: str,
+        state: str,
+        *,
+        redirect_uri: str | None = None,
+        code_challenge: str | None = None,
+    ) -> str:
+        del redirect_uri
+        parameters = {"state": state}
+        if code_challenge is not None:
+            parameters["code_challenge"] = code_challenge
+            parameters["code_challenge_method"] = "S256"
         base_url = self._authorize_urls[provider]
-        return _append_query_parameters(base_url, {"state": state})
+        return _append_query_parameters(base_url, parameters)
 
     async def exchange_code(
         self,
         provider: str,
         code: str,
+        *,
+        redirect_uri: str | None = None,
+        code_verifier: str | None = None,
     ) -> tuple[dict[str, str], list[str] | None]:
+        del redirect_uri
+        del code_verifier
         del code
         payload = self._token_payloads.get(provider)
         if payload is None:
@@ -156,7 +192,14 @@ class HttpOAuthService:
     def parse_state(self, state: str) -> OAuthState:
         return self._codec.decode(state)
 
-    def get_authorize_url(self, provider: str, state: str) -> str:
+    def get_authorize_url(
+        self,
+        provider: str,
+        state: str,
+        *,
+        redirect_uri: str | None = None,
+        code_challenge: str | None = None,
+    ) -> str:
         config = PROVIDERS.get(provider)
         client_id = self._settings.oauth_client_ids.get(provider)
         if (
@@ -171,8 +214,12 @@ class HttpOAuthService:
             )
 
         query: dict[str, str] = {"client_id": client_id, "state": state}
-        if self._settings.oauth_callback_url is not None:
-            query["redirect_uri"] = self._settings.oauth_callback_url
+        resolved_redirect_uri = redirect_uri or self._settings.oauth_callback_url
+        if resolved_redirect_uri is not None:
+            query["redirect_uri"] = resolved_redirect_uri
+        if code_challenge is not None:
+            query["code_challenge"] = code_challenge
+            query["code_challenge_method"] = "S256"
         if provider == "notion":
             query["owner"] = "user"
         if config.scopes:
@@ -184,6 +231,9 @@ class HttpOAuthService:
         self,
         provider: str,
         code: str,
+        *,
+        redirect_uri: str | None = None,
+        code_verifier: str | None = None,
     ) -> tuple[dict[str, str], list[str] | None]:
         config = PROVIDERS.get(provider)
         client_id = self._settings.oauth_client_ids.get(provider)
@@ -199,8 +249,11 @@ class HttpOAuthService:
             "grant_type": "authorization_code",
             "code": code,
         }
-        if self._settings.oauth_callback_url is not None:
-            payload["redirect_uri"] = self._settings.oauth_callback_url
+        resolved_redirect_uri = redirect_uri or self._settings.oauth_callback_url
+        if resolved_redirect_uri is not None:
+            payload["redirect_uri"] = resolved_redirect_uri
+        if code_verifier is not None:
+            payload["code_verifier"] = code_verifier
 
         headers = {"Accept": "application/json"}
         if provider == "notion":

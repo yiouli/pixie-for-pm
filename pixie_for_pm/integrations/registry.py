@@ -38,7 +38,7 @@ PROVIDERS: dict[str, ProviderConfig] = {
         name="Vercel",
         auth_type="oauth2",
         oauth_authorize_url="https://vercel.com/oauth/authorize",
-        oauth_token_url="https://api.vercel.com/v2/oauth/access_token",
+        oauth_token_url="https://api.vercel.com/login/oauth/token",
         scopes=["read:projects", "read:deployments"],
     ),
     "airtable": ProviderConfig(

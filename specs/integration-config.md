@@ -299,12 +299,16 @@ Notion-specific OAuth behavior: the authorize URL must include `owner=user`, and
 4. Server generates HMAC-signed state param (encodes server_id + user_id + random nonce)
 5. Server 302-redirects to provider's authorize URL with client_id, redirect_uri, state, scopes
   - Notion additionally requires `owner=user` on the authorize URL.
+  - When the configured callback URL points at localhost but the incoming request is on a non-local host, the server derives the redirect URI from the live request so preview and deployed environments do not reuse local callback settings.
+  - Vercel additionally requires PKCE, so the server generates a code verifier, stores it in a short-lived HttpOnly cookie, and sends the corresponding S256 code challenge on the authorize request.
 6. User authorizes in provider
 7. Provider redirects to: GET /api/connections/oauth/callback?code=...&state=...
 8. Server validates state signature, exchanges code for tokens
   - Notion exchanges the code with an HTTP Basic `Authorization` header and a JSON request body.
+  - Vercel exchanges the code against `https://api.vercel.com/login/oauth/token` and must include the original PKCE code verifier.
 9. Server encrypts tokens with Fernet, upserts into connections table
 10. Server redirects to: {WEB_APP_URL}/settings?server_id=...&connected={provider}
+  - When `WEB_APP_URL` is unset or still points at localhost on a non-local request host, the server redirects back to the current request origin instead.
 ```
 
 ### 3.2 API Key Flow (PostHog, Fireflies)
