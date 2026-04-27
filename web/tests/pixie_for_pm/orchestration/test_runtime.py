@@ -629,7 +629,9 @@ async def test_orchestrator_runs_retention_demo_discovery_and_deep_dive_flow(
     tool_calls: list[dict[str, str]] = []
 
     async def _notion_create_pages(pages: list[dict[str, object]]) -> str:
-        assert pages[0]["properties"]["title"] == "Retention Demo PRD - Option #2"
+        properties = pages[0].get("properties")
+        assert isinstance(properties, dict)
+        assert properties.get("title") == "Retention Demo PRD - Option #2"
         return (
             '{"results":[{"id":"34f9952098ec810199ddd02c431566ed",'
             '"url":"34f9952098ec810199ddd02c431566ed","type":"page"}]}'

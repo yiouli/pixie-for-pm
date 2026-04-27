@@ -10,6 +10,7 @@
 - updated the Vercel runtime provider to send `public: true` on inline deployments because the live API defaults to `public: false`, which caused the returned `.vercel.app` URL to require Vercel authentication and broke anonymous end-to-end verification
 - captured the remaining live constraint from the connected workspace: even with `public: true`, the team reports `ssoProtection.deploymentType = all_except_custom_domains`, so end-to-end verification must use the authenticated deployment API rather than an unauthenticated page fetch
 - refreshed the disposable Next.js fixture to `next@16.2.4`, `react@19.2.5`, and `react-dom@19.2.5` after the live Vercel API started rejecting the earlier pinned sample app with `VULNERABLE_NEXTJS_VERSION`
+- added authenticated teardown for the disposable Vercel project created by the live e2e so each run deletes its unique project id in a `finally` path, preventing the verification harness from leaving server-scoped test projects behind on success or failure
 - manually verified the current live MCP surface for this server and confirmed two blockers:
   - `vercel_list_teams` returns `403 Forbidden`, which prevents the no-LLM discovery path from obtaining a team id for `vercel_list_projects`
   - `vercel_deploy_to_vercel` does not return a deployed `.vercel.app` URL for a disposable Next.js app and instead only returns CLI guidance to run `vercel deploy`

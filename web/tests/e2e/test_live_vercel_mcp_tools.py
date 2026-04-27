@@ -120,17 +120,31 @@ def _extract_deployment_id(value: object) -> str | None:
     return None
 
 
-async def _wait_for_ready_deployment(
-    *,
-    deployment_id: str,
+def _extract_project_id(value: object) -> str | None:
+    if isinstance(value, dict):
+        project_id = value.get("id")
+        if isinstance(project_id, str) and project_id != "":
+            return project_id
+    return None
+
+
+def _extract_team_id(value: object) -> str | None:
+    if isinstance(value, dict):
+        team_id = value.get("accountId")
+        if isinstance(team_id, str) and team_id.startswith("team_"):
+            return team_id
+    return None
+
+
+async def _load_vercel_access_token(
     discord_server_id: str,
-) -> tuple[dict[str, object] | None, str | None]:
+) -> tuple[str | None, str | None]:
     settings = load_settings()
     encryption_key = settings.credentials_encryption_key
     if encryption_key is None or encryption_key.strip() == "":
         return (
             None,
-            "Missing CREDENTIALS_ENCRYPTION_KEY for authenticated readiness check.",
+            "Missing CREDENTIALS_ENCRYPTION_KEY for authenticated Vercel checks.",
         )
 
     credentials = await get_vercel_credentials(
@@ -141,13 +155,20 @@ async def _wait_for_ready_deployment(
     if credentials is None:
         return (
             None,
-            "Missing stored Vercel credentials for authenticated readiness check.",
+            "Missing stored Vercel credentials for authenticated Vercel checks.",
         )
 
     access_token = credentials.get("access_token")
     if access_token is None or access_token.strip() == "":
         return None, "Stored Vercel credentials do not include an access_token."
+    return access_token, None
 
+
+async def _wait_for_ready_deployment(
+    *,
+    deployment_id: str,
+    access_token: str,
+) -> tuple[dict[str, object] | None, str | None]:
     last_observation: str | None = None
     async with httpx.AsyncClient(timeout=20.0) as client:
         for attempt in range(12):
@@ -180,6 +201,26 @@ async def _wait_for_ready_deployment(
                 last_observation = f"attempt={attempt + 1}; error={exc}"
             await asyncio.sleep(5)
     return None, last_observation
+
+
+async def _delete_project(
+    *,
+    access_token: str,
+    project_id: str,
+    team_id: str | None,
+) -> str | None:
+    params = {"teamId": team_id} if team_id is not None else None
+    try:
+        async with httpx.AsyncClient(timeout=20.0) as client:
+            response = await client.delete(
+                f"https://api.vercel.com/v10/projects/{project_id}",
+                headers={"Authorization": f"Bearer {access_token}"},
+                params=params,
+            )
+            response.raise_for_status()
+    except httpx.HTTPError as exc:
+        return f"project_id={project_id}; team_id={team_id}; error={exc}"
+    return None
 
 
 @pytest.mark.asyncio
@@ -217,6 +258,12 @@ async def test_live_vercel_mcp_can_create_and_deploy_nextjs_project(
     assert "vercel_create_deployment" in vercel_tool_names, vercel_tool_names
 
     issues: list[str] = []
+    access_token, access_token_error = await _load_vercel_access_token(LIVE_SERVER_ID)
+    if access_token_error is not None:
+        issues.append(access_token_error)
+
+    project_id: str | None = None
+    team_id: str | None = None
 
     list_projects_tool = _find_tool(toolset.tools, "vercel_list_projects")
     try:
@@ -238,86 +285,101 @@ async def test_live_vercel_mcp_can_create_and_deploy_nextjs_project(
 
     create_project_tool = _find_tool(toolset.tools, "vercel_create_project")
     try:
-        create_result = await create_project_tool.ainvoke(
-            {"name": project_name, "framework": "nextjs"}
-        )
-        if (
-            not isinstance(create_result, dict)
-            or create_result.get("name") != project_name
-        ):
-            issues.append(
-                "vercel_create_project returned an unexpected payload. "
-                f"project_name={project_name}; result={create_result}"
+        try:
+            create_result = await create_project_tool.ainvoke(
+                {"name": project_name, "framework": "nextjs"}
             )
-    except Exception as exc:  # noqa: BLE001 - live integration boundary
-        issues.append(
-            "vercel_create_project raised before returning a project record. "
-            f"project_name={project_name}; error={exc}"
-        )
-
-    deploy_tool = _find_tool(toolset.tools, "vercel_create_deployment")
-    deploy_result: object | None = None
-    try:
-        deploy_result = await deploy_tool.ainvoke(
-            {"project_name": project_name, "files": deployment_files}
-        )
-    except Exception as exc:  # noqa: BLE001 - live integration boundary
-        issues.append(
-            "vercel_create_deployment raised before returning a deployment result. "
-            f"project_name={project_name}; error={exc}"
-        )
-
-    deployment_url = _extract_vercel_url(deploy_result)
-    if deployment_url is None:
-        issues.append(
-            "Expected vercel_create_deployment to return a live .vercel.app URL for "
-            "the disposable Next.js app, but it did not. "
-            f"project_name={project_name}; result={_stringify_result(deploy_result)}"
-        )
-    else:
-        deployment_id = _extract_deployment_id(deploy_result)
-        if deployment_id is None:
+            project_id = _extract_project_id(create_result)
+            team_id = _extract_team_id(create_result)
+            if (
+                not isinstance(create_result, dict)
+                or create_result.get("name") != project_name
+            ):
+                issues.append(
+                    "vercel_create_project returned an unexpected payload. "
+                    f"project_name={project_name}; result={create_result}"
+                )
+        except Exception as exc:  # noqa: BLE001 - live integration boundary
             issues.append(
-                "Expected vercel_create_deployment to return a deployment id, but it did not. "
+                "vercel_create_project raised before returning a project record. "
+                f"project_name={project_name}; error={exc}"
+            )
+
+        deploy_tool = _find_tool(toolset.tools, "vercel_create_deployment")
+        deploy_result: object | None = None
+        try:
+            deploy_result = await deploy_tool.ainvoke(
+                {"project_name": project_name, "files": deployment_files}
+            )
+        except Exception as exc:  # noqa: BLE001 - live integration boundary
+            issues.append(
+                "vercel_create_deployment raised before returning a deployment result. "
+                f"project_name={project_name}; error={exc}"
+            )
+
+        deployment_url = _extract_vercel_url(deploy_result)
+        if deployment_url is None:
+            issues.append(
+                "Expected vercel_create_deployment to return a live .vercel.app URL for "
+                "the disposable Next.js app, but it did not. "
                 f"project_name={project_name}; result={_stringify_result(deploy_result)}"
             )
         else:
-            ready_deployment, verification_error = await _wait_for_ready_deployment(
-                deployment_id=deployment_id,
-                discord_server_id=LIVE_SERVER_ID,
-            )
-            if verification_error is not None:
+            deployment_id = _extract_deployment_id(deploy_result)
+            if deployment_id is None:
                 issues.append(
-                    "Deployment did not reach READY through the authenticated Vercel API. "
-                    f"project_name={project_name}; deployment_id={deployment_id}; "
-                    f"url={deployment_url}; observation={verification_error}"
+                    "Expected vercel_create_deployment to return a deployment id, but it did not. "
+                    f"project_name={project_name}; result={_stringify_result(deploy_result)}"
                 )
-            elif ready_deployment is not None:
-                project = ready_deployment.get("project")
-                if not isinstance(project, dict):
+            elif access_token is not None:
+                ready_deployment, verification_error = await _wait_for_ready_deployment(
+                    deployment_id=deployment_id,
+                    access_token=access_token,
+                )
+                if verification_error is not None:
                     issues.append(
-                        "Authenticated deployment lookup returned no project metadata. "
+                        "Deployment did not reach READY through the authenticated Vercel API. "
                         f"project_name={project_name}; deployment_id={deployment_id}; "
-                        f"payload={ready_deployment}"
+                        f"url={deployment_url}; observation={verification_error}"
                     )
-                else:
-                    if project.get("name") != project_name:
+                elif ready_deployment is not None:
+                    project = ready_deployment.get("project")
+                    if not isinstance(project, dict):
                         issues.append(
-                            "Authenticated deployment lookup returned the wrong project name. "
-                            f"expected={project_name}; actual={project.get('name')}"
+                            "Authenticated deployment lookup returned no project metadata. "
+                            f"project_name={project_name}; deployment_id={deployment_id}; "
+                            f"payload={ready_deployment}"
                         )
-                    if project.get("framework") != "nextjs":
+                    else:
+                        if project.get("name") != project_name:
+                            issues.append(
+                                "Authenticated deployment lookup returned the wrong project name. "
+                                f"expected={project_name}; actual={project.get('name')}"
+                            )
+                        if project.get("framework") != "nextjs":
+                            issues.append(
+                                "Authenticated deployment lookup did not preserve the "
+                                "Next.js framework. "
+                                f"project_name={project_name}; "
+                                f"actual_framework={project.get('framework')}"
+                            )
+                    if ready_deployment.get("public") is not True:
                         issues.append(
-                            "Authenticated deployment lookup did not preserve the "
-                            "Next.js framework. "
-                            f"project_name={project_name}; "
-                            f"actual_framework={project.get('framework')}"
+                            "Authenticated deployment lookup did not mark the deployment public. "
+                            f"project_name={project_name}; deployment_id={deployment_id}; "
+                            f"payload={ready_deployment}"
                         )
-                if ready_deployment.get("public") is not True:
-                    issues.append(
-                        "Authenticated deployment lookup did not mark the deployment public. "
-                        f"project_name={project_name}; deployment_id={deployment_id}; "
-                        f"payload={ready_deployment}"
-                    )
+    finally:
+        if project_id is not None and access_token is not None:
+            cleanup_error = await _delete_project(
+                access_token=access_token,
+                project_id=project_id,
+                team_id=team_id,
+            )
+            if cleanup_error is not None:
+                issues.append(
+                    "Failed to delete the disposable Vercel project after the live e2e run. "
+                    f"project_name={project_name}; {cleanup_error}"
+                )
 
     assert not issues, "\n\n".join(issues)
