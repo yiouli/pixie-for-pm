@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Literal, Protocol
@@ -16,6 +17,9 @@ from pixie_for_pm.web.store import build_connection_store
 
 if TYPE_CHECKING:
     from pixie_for_pm.web.store import ConnectionStore
+
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -131,6 +135,14 @@ class IntegrationToolsetInitializer:
                     trigger=trigger,
                 )
             except Exception as exc:
+                logger.exception(
+                    "Integration tool initialization failed provider=%s "
+                    "discord_server_id=%s thread_key=%s dispatch_reason=%s",
+                    provider.id,
+                    trigger.discord_server_id,
+                    trigger.thread_key,
+                    trigger.dispatch_reason,
+                )
                 failures.append(
                     IntegrationLoadFailure(
                         provider_id=provider.id,
@@ -147,6 +159,7 @@ class IntegrationToolsetInitializer:
                     provider_id=connection.provider,
                     provider_name=provider.name,
                     server_id=server.id,
+                    trigger=trigger,
                     status_emitter=status_emitter,
                 )
                 for tool in provider_tools
@@ -177,6 +190,7 @@ class IntegrationToolsetInitializer:
         provider_id: str,
         provider_name: str,
         server_id: str,
+        trigger: DiscordTriggerContext,
         status_emitter: StatusEmitter | None,
     ) -> BaseTool:
         response_format: Literal["content", "content_and_artifact"] = getattr(
@@ -190,23 +204,39 @@ class IntegrationToolsetInitializer:
                 status_emitter,
                 f"Fetching data from {provider_name}...",
             )
-            if response_format == "content_and_artifact":
-                result = await tool.ainvoke(
-                    {
-                        "type": "tool_call",
-                        "id": f"wrapped-{provider_id}-{tool.name}",
-                        "name": tool.name,
-                        "args": kwargs,
-                    }
-                )
-                if isinstance(result, ToolMessage):
-                    wrapped_result: object = (result.content, result.artifact)
-                elif isinstance(result, tuple):
-                    wrapped_result = result
+            try:
+                if response_format == "content_and_artifact":
+                    result = await tool.ainvoke(
+                        {
+                            "type": "tool_call",
+                            "id": f"wrapped-{provider_id}-{tool.name}",
+                            "name": tool.name,
+                            "args": kwargs,
+                        }
+                    )
+                    if isinstance(result, ToolMessage):
+                        wrapped_result: object = (result.content, result.artifact)
+                    elif isinstance(result, tuple):
+                        wrapped_result = result
+                    else:
+                        wrapped_result = (result, None)
                 else:
-                    wrapped_result = (result, None)
-            else:
-                wrapped_result = await tool.ainvoke(kwargs)
+                    wrapped_result = await tool.ainvoke(kwargs)
+            except Exception:
+                logger.exception(
+                    "Tool invocation failed provider=%s tool=%s discord_server_id=%s "
+                    "thread_key=%s channel_id=%s message_id=%s dispatch_reason=%s "
+                    "arg_keys=%s",
+                    provider_id,
+                    tool.name,
+                    trigger.discord_server_id,
+                    trigger.thread_key,
+                    trigger.channel_id,
+                    trigger.message_id,
+                    trigger.dispatch_reason,
+                    ",".join(sorted(kwargs)) or "none",
+                )
+                raise
             await self._store.touch_connection_last_used(server_id, provider_id)
             await emit_status_update(
                 status_emitter,

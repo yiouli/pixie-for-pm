@@ -1,3 +1,4 @@
+import logging
 from pathlib import Path
 
 import pytest
@@ -89,6 +90,11 @@ async def _pm_direct_response(context: WorkflowContext) -> AgentExecution:
             )
         ]
     )
+
+
+async def _failing_handler(context: WorkflowContext) -> AgentExecution:
+    del context
+    raise RuntimeError("agent failure")
 
 
 async def _invalid_dispatcher_handoff(context: WorkflowContext) -> AgentExecution:
@@ -378,6 +384,41 @@ async def test_orchestrator_emits_internal_product_manager_status_updates(
 
 
 @pytest.mark.asyncio
+async def test_orchestrator_logs_dispatch_failures(
+    tmp_path: Path,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    request = DispatchRequest(
+        message=IncomingDiscordMessage(
+            discord_message_id=140,
+            discord_server_id="discord-server-140",
+            channel_id=240,
+            thread_id="discord-thread-140",
+            author_id=340,
+            content="Please investigate this failed Notion update.",
+            directly_mentions_bot=True,
+            is_reply_to_bot=False,
+        ),
+        target_agent=AgentRole.USER_RESEARCHER,
+        reason="direct_bot_mention",
+    )
+    caplog.set_level(logging.ERROR, logger="pixie_for_pm.orchestration.runtime")
+
+    async with PixieOrchestrator(
+        checkpoint_path=tmp_path / "dispatch-failure.sqlite",
+        agent_handlers={AgentRole.USER_RESEARCHER: _failing_handler},
+        toolset_initializer=_StaticToolsetInitializer(AgentToolset()),
+    ) as orchestrator:
+        with pytest.raises(RuntimeError, match="agent failure"):
+            await orchestrator.dispatch(request)
+
+    assert "Orchestration dispatch failed" in caplog.text
+    assert "target_agent=user_researcher" in caplog.text
+    assert "thread_key=discord-thread-140" in caplog.text
+    assert "discord_server_id=discord-server-140" in caplog.text
+
+
+@pytest.mark.asyncio
 async def test_orchestrator_dispatches_market_requests_to_market_analyst(
     tmp_path: Path,
 ) -> None:
@@ -597,11 +638,15 @@ async def test_orchestrator_runs_retention_demo_discovery_and_deep_dive_flow(
         )
 
     assert [message.agent for message in first_result.transcript] == [
-        AgentRole.PRODUCT_MANAGER
+        AgentRole.PRODUCT_MANAGER,
+        AgentRole.PRODUCT_MANAGER,
     ]
+    assert "here's how i'm thinking" in first_result.transcript[0].content.lower()
+    assert "user researcher" in first_result.transcript[0].content.lower()
     assert "three hypotheses" in first_result.transcript[0].content.lower()
+    assert "three hypotheses" in first_result.transcript[1].content.lower()
     assert "which direction do you want me to deepen" in (
-        first_result.transcript[0].content.lower()
+        first_result.transcript[1].content.lower()
     )
 
     assert [message.agent for message in second_result.transcript] == [

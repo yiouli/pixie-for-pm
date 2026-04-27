@@ -1,110 +1,60 @@
-from collections.abc import AsyncIterator
-from typing import cast
+from __future__ import annotations
+
+import logging
 
 import pytest
-from langchain_core.messages import AIMessage
+from langchain_core.messages import AIMessage, BaseMessage
+from langchain_core.tools import ToolException
 
-from pixie_for_pm.agents.deep_agent import (
-    DEEP_AGENT_RECURSION_LIMIT,
-    _invoke_agent_with_status_events,
-    _status_for_agent_event,
-)
+from pixie_for_pm.agents.deep_agent import _status_for_agent_event, run_deep_agent
 from pixie_for_pm.domain.models import AgentRole, WorkflowContext
-from pixie_for_pm.integrations.toolset import AgentToolset, DiscordTriggerContext
+from pixie_for_pm.integrations.toolset import (
+    AgentToolset,
+    ConnectedIntegration,
+    DiscordTriggerContext,
+    IntegrationLoadFailure,
+)
 
 
-class _InvokeOnlyAgent:
+class _FailingDeepAgent:
+    async def ainvoke(
+        self,
+        inputs: object,
+        config: object | None = None,
+    ) -> dict[str, object]:
+        del inputs, config
+        raise RuntimeError("missing content_updates parameter")
+
+
+class _RetryingDeepAgent:
     def __init__(self) -> None:
-        self.config: object | None = None
+        self.calls: list[list[BaseMessage]] = []
 
     async def ainvoke(
         self,
-        input: object,
+        inputs: object,
         config: object | None = None,
     ) -> dict[str, object]:
-        del input
-        self.config = config
-        return {"messages": [AIMessage(content="done")]}
-
-
-class _StreamingAgent:
-    def __init__(self) -> None:
-        self.config: object | None = None
-
-    async def astream_events(
-        self,
-        input: object,
-        config: object | None = None,
-        *,
-        version: str,
-    ) -> AsyncIterator[dict[str, object]]:
-        del input
-        assert version == "v2"
-        self.config = config
-        yield {
-            "event": "on_chain_end",
-            "name": "test_agent",
-            "data": {"output": {"messages": [AIMessage(content="done")]}},
-        }
-
-
-def _context(*, streamed: bool) -> WorkflowContext:
-    status_emitter = (lambda _status: None) if streamed else None
-    return WorkflowContext(
-        thread_key="discord-thread-1",
-        current_agent=AgentRole.USER_RESEARCHER,
-        user_message="Summarize the findings.",
-        transcript=(),
-        trigger=DiscordTriggerContext(
-            discord_server_id="discord-server-1",
-            discord_user_id="user-1",
-            channel_id=10,
-            thread_id="discord-thread-1",
-            message_id=99,
-            thread_key="discord-thread-1",
-            dispatch_reason="direct_bot_mention",
-        ),
-        toolset=AgentToolset(),
-        status_emitter=status_emitter,
-    )
-
-
-@pytest.mark.asyncio
-async def test_invoke_agent_with_status_events_passes_recursion_limit_to_ainvoke() -> (
-    None
-):
-    agent = _InvokeOnlyAgent()
-
-    result = await _invoke_agent_with_status_events(
-        agent=agent,
-        context=_context(streamed=False),
-        role=AgentRole.USER_RESEARCHER,
-        inputs={"messages": []},
-        agent_name="test_agent",
-    )
-    messages = cast(list[AIMessage], result["messages"])
-
-    assert messages[0].content == "done"
-    assert agent.config == {"recursion_limit": DEEP_AGENT_RECURSION_LIMIT}
-
-
-@pytest.mark.asyncio
-async def test_invoke_agent_with_status_events_passes_recursion_limit_to_astream_events() -> (
-    None
-):
-    agent = _StreamingAgent()
-
-    result = await _invoke_agent_with_status_events(
-        agent=agent,
-        context=_context(streamed=True),
-        role=AgentRole.USER_RESEARCHER,
-        inputs={"messages": []},
-        agent_name="test_agent",
-    )
-    messages = cast(list[AIMessage], result["messages"])
-
-    assert messages[0].content == "done"
-    assert agent.config == {"recursion_limit": DEEP_AGENT_RECURSION_LIMIT}
+        del config
+        if not isinstance(inputs, dict):
+            raise AssertionError("expected dict inputs")
+        messages = inputs.get("messages")
+        if not isinstance(messages, list):
+            raise AssertionError("expected list of messages")
+        self.calls.append(messages)
+        if len(self.calls) == 1:
+            raise ToolException(
+                " ".join(
+                    (
+                        '{"body":"{\\"object\\":\\"error\\",',
+                        '\\"status\\":400,\\"code\\":\\"validation_error\\",',
+                        '\\"message\\":\\"The \\\\\\"update_content\\\\\\"',
+                        'command requires a \\\\\\"content_updates\\\\\\"',
+                        'parameter.\\"}"}',
+                    )
+                )
+            )
+        return {"messages": [AIMessage(content="Recovered after retry")]}
 
 
 @pytest.mark.parametrize(
@@ -146,3 +96,104 @@ def test_status_for_agent_event_emits_tool_progress_updates(
         )
         == f"{subject} is drafting the response..."
     )
+
+
+@pytest.mark.asyncio
+async def test_run_deep_agent_logs_failure_context(
+    caplog: pytest.LogCaptureFixture,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        "pixie_for_pm.agents.deep_agent.create_deep_agent",
+        lambda **kwargs: _FailingDeepAgent(),
+    )
+    caplog.set_level(logging.ERROR, logger="pixie_for_pm.agents.deep_agent")
+
+    with pytest.raises(RuntimeError, match="missing content_updates parameter"):
+        await run_deep_agent(
+            role=AgentRole.USER_RESEARCHER,
+            agent_name="pixie_user_researcher",
+            system_prompt="Investigate the issue.",
+            context=WorkflowContext(
+                thread_key="discord-thread-404",
+                current_agent=AgentRole.USER_RESEARCHER,
+                user_message="Update the Notion research synthesis.",
+                transcript=(),
+                trigger=DiscordTriggerContext(
+                    discord_server_id="discord-server-404",
+                    discord_user_id="user-404",
+                    channel_id=12,
+                    thread_id="discord-thread-404",
+                    message_id=98,
+                    thread_key="discord-thread-404",
+                    dispatch_reason="direct_bot_mention",
+                ),
+                toolset=AgentToolset(
+                    integrations=(
+                        ConnectedIntegration(
+                            provider_id="notion",
+                            provider_name="Notion",
+                            auth_type="oauth2",
+                            status="active",
+                            scopes=("read_content", "update_content"),
+                            tool_names=("notion_update_page",),
+                        ),
+                    ),
+                    failures=(
+                        IntegrationLoadFailure(
+                            provider_id="github",
+                            provider_name="GitHub",
+                            status="active",
+                            error="secondary provider failure",
+                        ),
+                    ),
+                ),
+            ),
+            model="test-model",
+        )
+
+    assert "Deep agent run failed" in caplog.text
+    assert "role=user_researcher" in caplog.text
+    assert "thread_key=discord-thread-404" in caplog.text
+    assert "integrations=notion" in caplog.text
+    assert "tool_failures=github:secondary provider failure" in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_run_deep_agent_retries_tool_validation_errors(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    agent = _RetryingDeepAgent()
+    monkeypatch.setattr(
+        "pixie_for_pm.agents.deep_agent.create_deep_agent",
+        lambda **kwargs: agent,
+    )
+
+    result = await run_deep_agent(
+        role=AgentRole.USER_RESEARCHER,
+        agent_name="pixie_user_researcher",
+        system_prompt="Investigate the issue.",
+        context=WorkflowContext(
+            thread_key="discord-thread-405",
+            current_agent=AgentRole.USER_RESEARCHER,
+            user_message="Update the Notion research synthesis.",
+            transcript=(),
+            trigger=DiscordTriggerContext(
+                discord_server_id="discord-server-405",
+                discord_user_id="user-405",
+                channel_id=13,
+                thread_id="discord-thread-405",
+                message_id=99,
+                thread_key="discord-thread-405",
+                dispatch_reason="direct_bot_mention",
+            ),
+            toolset=AgentToolset(),
+        ),
+        model="test-model",
+    )
+
+    assert result == "Recovered after retry"
+    assert len(agent.calls) == 2
+    retry_message = agent.calls[1][-1]
+    assert "update_content" in retry_message.content
+    assert "content_updates" in retry_message.content

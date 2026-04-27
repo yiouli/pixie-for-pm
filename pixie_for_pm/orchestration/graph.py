@@ -14,9 +14,11 @@ from pixie_for_pm.domain.models import (
     AgentMessage,
     AgentRole,
     DispatchRequest,
+    PublicMessageEmitter,
     ResponseEmitter,
     StatusEmitter,
     WorkflowContext,
+    emit_public_message,
     emit_status_update,
 )
 from pixie_for_pm.integrations.toolset import AgentToolset, DiscordTriggerContext
@@ -108,6 +110,7 @@ def _to_context(
     trigger: DiscordTriggerContext,
     status_emitter: StatusEmitter | None,
     response_emitter: ResponseEmitter | None,
+    public_message_emitter: PublicMessageEmitter | None,
     toolset: AgentToolset,
 ) -> WorkflowContext:
     return WorkflowContext(
@@ -119,6 +122,7 @@ def _to_context(
         toolset,
         status_emitter,
         response_emitter,
+        public_message_emitter,
         state["current_handoff_reason"],
     )
 
@@ -130,6 +134,7 @@ def _agent_node(
     trigger: DiscordTriggerContext,
     status_emitter: StatusEmitter | None,
     response_emitter: ResponseEmitter | None,
+    public_message_emitter: PublicMessageEmitter | None,
     toolset: AgentToolset,
 ) -> AgentNode:
     async def _run_agent(state: WorkflowState) -> dict[str, object]:
@@ -144,10 +149,14 @@ def _agent_node(
                 trigger=trigger,
                 status_emitter=status_emitter,
                 response_emitter=response_emitter,
+                public_message_emitter=public_message_emitter,
                 toolset=toolset,
             )
         )
         _validate_handoffs(role, execution.handoffs)
+        if execution.messages and execution.handoffs:
+            for message in execution.messages:
+                await emit_public_message(public_message_emitter, message.content)
         serialized_messages = _serialize_messages(execution.messages)
         return {
             "transcript": serialized_messages,
@@ -226,6 +235,7 @@ def build_workflow_graph(
     trigger: DiscordTriggerContext,
     status_emitter: StatusEmitter | None = None,
     response_emitter: ResponseEmitter | None = None,
+    public_message_emitter: PublicMessageEmitter | None = None,
     toolset: AgentToolset,
 ) -> AsyncWorkflowGraph:
     builder = StateGraph(WorkflowState)
@@ -243,6 +253,7 @@ def build_workflow_graph(
                     trigger=trigger,
                     status_emitter=status_emitter,
                     response_emitter=response_emitter,
+                    public_message_emitter=public_message_emitter,
                     toolset=toolset,
                 ),
             ),

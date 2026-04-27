@@ -68,6 +68,15 @@ cd web
 npm run test:e2e -- tests/e2e/install.spec.ts
 ```
 
+For the scripted retention-demo loop described in [demo.md](/home/yiouli/repo/pixie-for-pm/demo.md), run:
+
+```bash
+cd web
+npm run test:e2e:demo-loop
+```
+
+This harness bypasses Discord login for the settings page, seeds the fixed demo workspace for `1459772566528069715`, and runs the full PM -> user researcher -> PM -> designer -> PM loop against a synthetic Discord channel dispatch.
+
 ## 4. Create a Test Channel in Discord
 
 Create one channel in the target server for orchestration traffic, for example:

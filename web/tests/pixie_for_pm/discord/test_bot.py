@@ -396,6 +396,7 @@ class _FakeOrchestrator:
         *,
         events: list[str] | None = None,
         error: Exception | None = None,
+        public_messages: list[str] | None = None,
         transcript: list[AgentMessage] | None = None,
         response_deltas: list[str] | None = None,
     ) -> None:
@@ -403,6 +404,7 @@ class _FakeOrchestrator:
         self.events = events if events is not None else []
         self.status_updates: list[str] = []
         self.error = error
+        self.public_messages = public_messages or []
         self.response_deltas = response_deltas or []
         self.transcript = transcript or [
             AgentMessage(
@@ -417,12 +419,16 @@ class _FakeOrchestrator:
         *,
         status_emitter: Callable[[str], Awaitable[None]] | None = None,
         response_emitter: Callable[[str], Awaitable[None]] | None = None,
+        public_message_emitter: Callable[[str], Awaitable[None]] | None = None,
     ) -> object:
         self.requests.append(request)
         self.events.append("dispatch")
         if status_emitter is not None:
             await status_emitter("Analyzing request...")
             self.status_updates.append("Analyzing request...")
+        if public_message_emitter is not None:
+            for message in self.public_messages:
+                await public_message_emitter(message)
         if response_emitter is not None:
             for delta in self.response_deltas:
                 await response_emitter(delta)
@@ -760,6 +766,50 @@ async def test_progress_reporter_streams_partial_content_before_final_publish() 
     assert response_channel.sent_messages[1].content == ("A" * 300) + ("B" * 200)
     assert response_channel.sent_messages[2].content == ("B" * 100)
     assert status_message.deleted is True
+
+
+@pytest.mark.asyncio
+async def test_progress_reporter_publishes_mid_turn_message_without_replaying_it_at_completion() -> (
+    None
+):
+    events: list[str] = []
+    source_message = _FakeDiscordMessage(
+        message_id=19,
+        content="status",
+        author_id=42,
+        channel=_FakeChannel(22, events=events),
+        guild_id=99,
+        events=events,
+    )
+    response_channel = _FakeChannel(55, events=events)
+    reporter = _DiscordProgressReporter(
+        source_message=cast(discord.Message, source_message),
+        response_channel=response_channel,
+    )
+    planning_message = (
+        "Here's how I'm thinking about this:\n"
+        "1. Ask the user researcher to pull the strongest evidence."
+    )
+    final_message = "Here are three hypotheses to improve retention."
+
+    await reporter.start()
+    await reporter.publish_message(planning_message)
+    await reporter.publish_transcript(
+        [
+            AgentMessage(
+                agent=AgentRole.PRODUCT_MANAGER,
+                content=planning_message,
+            ),
+            AgentMessage(
+                agent=AgentRole.PRODUCT_MANAGER,
+                content=final_message,
+            ),
+        ]
+    )
+
+    assert len(response_channel.sent_messages) == 3
+    assert response_channel.sent_messages[1].content == planning_message
+    assert response_channel.sent_messages[2].content == final_message
 
 
 @pytest.mark.asyncio

@@ -235,6 +235,7 @@ class _DiscordProgressReporter:
         self._last_status: str | None = None
         self._stream_buffer: str = ""
         self._has_stream_activity = False
+        self._published_public_messages: list[str] = []
 
     async def start(self) -> None:
         await self._add_eyes_reaction()
@@ -270,16 +271,37 @@ class _DiscordProgressReporter:
         self._stream_buffer += delta
         await self._flush_stream_buffer(final=False)
 
+    async def publish_message(self, content: str) -> None:
+        normalized_content = content.strip()
+        if normalized_content == "":
+            return
+
+        for chunk in split_discord_response(
+            _render_discord_content(normalized_content)
+        ):
+            await self._send_follow_up(chunk, keep_typing=True)
+        self._published_public_messages.append(normalized_content)
+
     async def publish_transcript(self, transcript: Sequence[AgentMessage]) -> None:
-        final_content = compose_public_reply(transcript)
-        if final_content == "":
+        full_content = compose_public_reply(transcript)
+        if full_content == "":
             raise RuntimeError("Orchestrator returned no user-visible messages.")
+
+        final_content = full_content
+        published_prefix = self._published_prefix()
+        if published_prefix != "" and final_content.startswith(published_prefix):
+            final_content = final_content[len(published_prefix) :].lstrip()
+
+        if final_content == "":
+            await self._delete_status_message()
+            self._last_status = full_content
+            return
 
         if not self._has_stream_activity:
             self._stream_buffer = final_content
         await self._flush_stream_buffer(final=True)
         await self._delete_status_message()
-        self._last_status = final_content
+        self._last_status = full_content
 
     async def publish_error(self, content: str) -> None:
         embed = _error_embed(content)
@@ -491,6 +513,11 @@ class _DiscordProgressReporter:
 
         return (split_at, content)
 
+    def _published_prefix(self) -> str:
+        return "\n\n".join(
+            message for message in self._published_public_messages if message != ""
+        )
+
 
 class PixieDiscordBot(discord.Client):
     def __init__(self, settings: AppSettings) -> None:
@@ -590,6 +617,7 @@ class PixieDiscordBot(discord.Client):
                 dispatch_request,
                 status_emitter=progress_reporter.emit,
                 response_emitter=progress_reporter.stream_content,
+                public_message_emitter=progress_reporter.publish_message,
             )
             await progress_reporter.publish_transcript(result.transcript)
         except Exception:

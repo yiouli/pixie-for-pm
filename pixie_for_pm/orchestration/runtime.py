@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from collections.abc import Mapping
 from contextlib import AbstractAsyncContextManager
 from pathlib import Path
@@ -12,6 +13,7 @@ from pixie_for_pm.domain.models import (
     AgentRole,
     DispatchRequest,
     OrchestrationResult,
+    PublicMessageEmitter,
     ResponseEmitter,
     StatusEmitter,
     emit_status_update,
@@ -27,6 +29,8 @@ from pixie_for_pm.orchestration.graph import (
     build_workflow_graph,
     deserialize_transcript,
 )
+
+logger = logging.getLogger(__name__)
 
 
 class PixieOrchestrator:
@@ -70,6 +74,7 @@ class PixieOrchestrator:
         *,
         status_emitter: StatusEmitter | None = None,
         response_emitter: ResponseEmitter | None = None,
+        public_message_emitter: PublicMessageEmitter | None = None,
     ) -> OrchestrationResult:
         if self._checkpointer is None:
             raise RuntimeError(
@@ -85,24 +90,40 @@ class PixieOrchestrator:
             request.thread_key,
             request.reason,
         )
-        await emit_status_update(status_emitter, "Checking connected tools...")
-        toolset = await self._toolset_initializer.initialize(
-            trigger,
-            status_emitter=status_emitter,
-        )
-        graph: AsyncWorkflowGraph = build_workflow_graph(
-            handlers=self._handlers,
-            checkpointer=self._checkpointer,
-            trigger=trigger,
-            status_emitter=status_emitter,
-            response_emitter=response_emitter,
-            toolset=toolset,
-        )
-        state = build_initial_state(request)
-        final_state = await graph.ainvoke(
-            state,
-            config={"configurable": {"thread_id": request.thread_key}},
-        )
+        try:
+            await emit_status_update(status_emitter, "Checking connected tools...")
+            toolset = await self._toolset_initializer.initialize(
+                trigger,
+                status_emitter=status_emitter,
+            )
+            graph: AsyncWorkflowGraph = build_workflow_graph(
+                handlers=self._handlers,
+                checkpointer=self._checkpointer,
+                trigger=trigger,
+                status_emitter=status_emitter,
+                response_emitter=response_emitter,
+                public_message_emitter=public_message_emitter,
+                toolset=toolset,
+            )
+            state = build_initial_state(request)
+            final_state = await graph.ainvoke(
+                state,
+                config={"configurable": {"thread_id": request.thread_key}},
+            )
+        except Exception:
+            logger.exception(
+                "Orchestration dispatch failed target_agent=%s thread_key=%s "
+                "discord_server_id=%s channel_id=%s thread_id=%s message_id=%s "
+                "reason=%s",
+                request.target_agent.value,
+                request.thread_key,
+                request.message.discord_server_id,
+                request.message.channel_id,
+                request.message.thread_id,
+                request.message.discord_message_id,
+                request.reason,
+            )
+            raise
         return OrchestrationResult(
             thread_key=final_state["thread_key"],
             transcript=deserialize_transcript(final_state["turn_transcript"]),

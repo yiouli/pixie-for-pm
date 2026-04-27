@@ -8,6 +8,7 @@
         "build": "tsc -b && vite build",
         "test": "vitest run",
         "test:e2e": "playwright test",
+        "test:e2e:demo-loop": "playwright test tests/e2e/demo-loop.spec.ts",
         "watch": "vite build --watch",
         "preview": "vite preview"
     },

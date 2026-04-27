@@ -250,7 +250,12 @@ async def test_product_manager_handler_delegates_demo_retention_questions_to_use
         )
     )
 
-    assert execution.messages == []
+    assert [message.agent for message in execution.messages] == [
+        AgentRole.PRODUCT_MANAGER
+    ]
+    assert "here's how i'm thinking" in execution.messages[0].content.lower()
+    assert "user researcher" in execution.messages[0].content.lower()
+    assert "three hypotheses" in execution.messages[0].content.lower()
     assert [handoff.target_agent for handoff in execution.handoffs] == [
         AgentRole.USER_RESEARCHER
     ]

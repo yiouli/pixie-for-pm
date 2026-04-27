@@ -12,6 +12,7 @@ if TYPE_CHECKING:
 
 StatusEmitter = Callable[[str], Awaitable[None] | None]
 ResponseEmitter = Callable[[str], Awaitable[None] | None]
+PublicMessageEmitter = Callable[[str], Awaitable[None] | None]
 
 
 async def emit_status_update(
@@ -34,6 +35,18 @@ async def emit_response_chunk(
         return
 
     maybe_awaitable = response_emitter(chunk)
+    if inspect.isawaitable(maybe_awaitable):
+        await maybe_awaitable
+
+
+async def emit_public_message(
+    public_message_emitter: PublicMessageEmitter | None,
+    content: str,
+) -> None:
+    if public_message_emitter is None or content == "":
+        return
+
+    maybe_awaitable = public_message_emitter(content)
     if inspect.isawaitable(maybe_awaitable):
         await maybe_awaitable
 
@@ -98,6 +111,7 @@ class WorkflowContext:
     toolset: AgentToolset
     status_emitter: StatusEmitter | None = None
     response_emitter: ResponseEmitter | None = None
+    public_message_emitter: PublicMessageEmitter | None = None
     handoff_context: str | None = None
 
 

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Awaitable, Callable
+from dataclasses import replace
 
 from langchain_core.language_models.chat_models import BaseChatModel
 
@@ -146,7 +147,7 @@ async def _handle_demo_research_brief(
         role=AgentRole.USER_RESEARCHER,
         agent_name=USER_RESEARCHER_AGENT_NAME,
         system_prompt=_SYSTEM_PROMPT,
-        context=context,
+        context=replace(context, response_emitter=None),
         model=model,
         openai_api_key=openai_api_key,
         execution_context_builder=lambda current_context: _build_demo_execution_context(
@@ -232,6 +233,11 @@ def _build_execution_context(context: WorkflowContext) -> str:
             (
                 "- Update Notion with transcript tagging and the final synthesis "
                 "artifacts before concluding."
+            ),
+            (
+                "- Before using Notion write tools, inspect the schema and include "
+                "every required parameter exactly. For update_content, provide "
+                "content_updates explicitly."
             ),
             "Connected integrations:",
             integrations,

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Awaitable, Callable
+from dataclasses import replace
 
 from langchain_core.language_models.chat_models import BaseChatModel
 
@@ -22,6 +23,7 @@ from pixie_for_pm.domain.models import (
     AgentMessage,
     AgentRole,
     WorkflowContext,
+    emit_public_message,
 )
 
 DEFAULT_PRODUCT_MANAGER_MODEL = DEFAULT_DEEP_AGENT_MODEL
@@ -89,8 +91,15 @@ def build_product_manager_handler(
                 )
 
         if is_retention_next_step_demo(context.user_message):
+            planning_message = _build_research_handoff_message(context)
+            await emit_public_message(context.public_message_emitter, planning_message)
             return AgentExecution(
-                messages=[],
+                messages=[
+                    AgentMessage(
+                        agent=AgentRole.PRODUCT_MANAGER,
+                        content=planning_message,
+                    )
+                ],
                 handoffs=[
                     AgentHandoff(
                         source_agent=AgentRole.PRODUCT_MANAGER,
@@ -109,7 +118,7 @@ def build_product_manager_handler(
                 role=AgentRole.PRODUCT_MANAGER,
                 agent_name=PRODUCT_MANAGER_AGENT_NAME,
                 system_prompt=PRODUCT_MANAGER_SYSTEM_PROMPT,
-                context=context,
+                context=_without_response_stream(context),
                 model=model,
                 openai_api_key=openai_api_key,
                 execution_context_builder=lambda current_context: _build_prd_context(
@@ -261,6 +270,26 @@ def _build_research_brief(context: WorkflowContext) -> str:
     )
 
 
+def _build_research_handoff_message(context: WorkflowContext) -> str:
+    return "\n".join(
+        (
+            "Here's how I'm thinking about this:",
+            (
+                "Before I recommend what to build next, I want to confirm where "
+                "retention is breaking, which repeat-use barrier matters most, "
+                "and what behavior change is most likely to move the metric."
+            ),
+            "",
+            "Planned steps:",
+            "1. Ask the user researcher to pull the strongest existing evidence and patterns.",
+            "2. Synthesize the biggest retention barrier and the most promising leverage points.",
+            "3. Come back with three hypotheses and a recommendation on which one to deepen.",
+            "",
+            f"Starting point: {context.user_message}",
+        )
+    )
+
+
 def _build_hypothesis_context(context: WorkflowContext, *, findings: str) -> str:
     return "\n".join(
         (
@@ -329,6 +358,10 @@ def _describe_integrations(context: WorkflowContext) -> str:
     if not integrations:
         return "- No connected integrations were detected."
     return "\n".join(integrations)
+
+
+def _without_response_stream(context: WorkflowContext) -> WorkflowContext:
+    return replace(context, response_emitter=None)
 
 
 __all__ = [
