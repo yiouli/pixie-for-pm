@@ -3,6 +3,8 @@ from pathlib import Path
 
 import pytest
 from langchain_core.language_models.fake_chat_models import FakeListChatModel
+from langchain_core.tools import StructuredTool
+from pydantic import BaseModel, Field
 
 from pixie_for_pm.agents.registry import (
     AgentHandler,
@@ -39,6 +41,19 @@ class _ToolCallingFakeListChatModel(FakeListChatModel):
     ) -> "_ToolCallingFakeListChatModel":
         del tools, tool_choice, kwargs
         return self
+
+
+class _NotionCreatePagesArgs(BaseModel):
+    pages: list[dict[str, object]] = Field()
+
+
+class _VercelListProjectsArgs(BaseModel):
+    team_name: str | None = Field(default=None)
+
+
+class _VercelCreateDeploymentArgs(BaseModel):
+    project_name: str = Field()
+    deployment_summary: str = Field()
 
 
 async def _pm_with_handoff(context: WorkflowContext) -> AgentExecution:
@@ -610,7 +625,68 @@ async def test_orchestrator_runs_retention_demo_discovery_and_deep_dive_flow(
     tmp_path: Path,
 ) -> None:
     thread_id = "discord-thread-demo"
-    initializer = _StaticToolsetInitializer(_demo_toolset())
+
+    async def _notion_create_pages(pages: list[dict[str, object]]) -> str:
+        assert pages[0]["properties"]["title"] == "Retention Demo PRD - Option #2"
+        return (
+            '{"results":[{"id":"34f9952098ec810199ddd02c431566ed",'
+            '"url":"34f9952098ec810199ddd02c431566ed","type":"page"}]}'
+        )
+
+    async def _vercel_list_projects(team_name: str | None = None) -> str:
+        del team_name
+        return "pixie-retention-demo"
+
+    async def _vercel_create_deployment(
+        project_name: str,
+        deployment_summary: str,
+    ) -> str:
+        assert project_name == "pixie-retention-demo"
+        assert deployment_summary != ""
+        return "https://pixie-retention-demo-eval.vercel.app"
+
+    initializer = _StaticToolsetInitializer(
+        AgentToolset(
+            tools=(
+                StructuredTool.from_function(
+                    coroutine=_notion_create_pages,
+                    name="notion_notion-create-pages",
+                    description="Create Notion pages.",
+                    args_schema=_NotionCreatePagesArgs,
+                ),
+                StructuredTool.from_function(
+                    coroutine=_vercel_list_projects,
+                    name="vercel_list_projects",
+                    description="List Vercel projects.",
+                    args_schema=_VercelListProjectsArgs,
+                ),
+                StructuredTool.from_function(
+                    coroutine=_vercel_create_deployment,
+                    name="vercel_create_deployment",
+                    description="Create a Vercel deployment.",
+                    args_schema=_VercelCreateDeploymentArgs,
+                ),
+            ),
+            integrations=(
+                ConnectedIntegration(
+                    provider_id="notion",
+                    provider_name="Notion",
+                    auth_type="oauth2",
+                    status="active",
+                    scopes=("write_content",),
+                    tool_names=("notion_notion-create-pages",),
+                ),
+                ConnectedIntegration(
+                    provider_id="vercel",
+                    provider_name="Vercel",
+                    auth_type="oauth2",
+                    status="active",
+                    scopes=("projects.read", "deployments.write"),
+                    tool_names=("vercel_list_projects", "vercel_create_deployment"),
+                ),
+            ),
+        )
+    )
 
     async with PixieOrchestrator(
         checkpoint_path=tmp_path / "retention-demo.sqlite",
@@ -718,15 +794,19 @@ async def test_orchestrator_runs_retention_demo_discovery_and_deep_dive_flow(
         AgentRole.COORDINATOR,
     ]
     assert second_result.transcript[0].content.lower() == "sure. let me do that"
-    second_turn_content = second_result.transcript[-1].content.lower()
-    assert "prd for option #2" in second_turn_content
-    assert "prototype" in second_turn_content
+    second_turn_content = second_result.transcript[-1].content
+    assert "PRD for option #2" in second_turn_content
+    assert (
+        "https://www.notion.so/34f9952098ec810199ddd02c431566ed" in second_turn_content
+    )
+    assert "prototype" in second_turn_content.lower()
 
     assert [message.agent for message in third_result.transcript] == [
         AgentRole.COORDINATOR,
         AgentRole.COORDINATOR,
     ]
     assert third_result.transcript[0].content.lower() == "on it."
-    third_turn_content = third_result.transcript[-1].content.lower()
-    assert "prototype" in third_turn_content
-    assert "let me know what you think" in third_turn_content
+    third_turn_content = third_result.transcript[-1].content
+    assert "prototype" in third_turn_content.lower()
+    assert "https://pixie-retention-demo-eval.vercel.app" in third_turn_content
+    assert "let me know what you think" in third_turn_content.lower()

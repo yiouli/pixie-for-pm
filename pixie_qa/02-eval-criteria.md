@@ -28,15 +28,19 @@
    Applies to: use case 2.
    Criterion: after the PRD write succeeds, the coordinator should surface a usable Notion link in the public reply and ask about the prototype next step.
    Data to capture: `public_reply_*` wraps and Notion tool-call outputs.
-6. Designer handoff and publication.
-   Applies to: use cases 2 and 3.
-   Criterion: the designer should receive the PRD through the coordinator, publish or attempt to publish a clickable prototype through Vercel, and return the result to the coordinator.
-   Data to capture: `prototype_artifact`, `handoff_sequence_*`, and `tool_args__*` wraps.
-7. Prototype artifact surfacing.
+6. Three-turn conversation shape.
    Applies to: use case 2.
-   Criterion: the final coordinator-visible reply should include the deploy result and a usable Vercel URL when a deploy succeeds.
+   Criterion: the demo should keep the three visible turns intact: numbered options first, a PRD follow-up question second, and a third coordinator reply after the designer step.
+   Data to capture: `public_reply_*` wraps.
+7. Designer handoff and publication.
+   Applies to: use cases 2 and 3.
+   Criterion: the designer should receive the PRD through the coordinator, call a deploy-capable Vercel tool, and return either a live deployment result or an honest blocked/advisory status to the coordinator.
+   Data to capture: `prototype_artifact`, `handoff_sequence_*`, and `tool_args__*` wraps.
+8. Prototype artifact surfacing.
+   Applies to: use case 2.
+   Criterion: the final coordinator-visible reply should include a usable Vercel URL when a deploy succeeds, and it must not claim the prototype is ready when the runtime only returned manual deployment instructions or another blocker.
    Data to capture: `public_reply_*` wraps and Vercel tool-call outputs.
-8. Public-thread brevity.
+9. Public-thread brevity.
    Applies to: all use cases.
    Criterion: user-visible replies should stay short and conversational rather than containing plan dumps, PRD bodies, or prototype specs.
    Data to capture: `public_reply_*` wraps.

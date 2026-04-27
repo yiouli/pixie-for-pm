@@ -326,8 +326,12 @@ def conversation_has_three_distinct_turns(evaluable: Evaluable) -> Evaluation:
     """The bot should produce three distinct conversational turns:
 
     1. Coordinator presents 3 options after the research and PM passes complete.
-    2. Coordinator shares the saved PRD link and asks if the user wants a prototype.
-    3. Coordinator returns the deployed Vercel link after the designer publishes.
+    2. Coordinator asks if the user wants a prototype after the PRD step.
+    3. Coordinator returns a third public reply after the designer step.
+
+    Link-specific checks are covered separately by:
+    - notion_link_surfaced_in_reply
+    - vercel_link_surfaced_in_reply
     """
     replies = _public_replies(evaluable)
     if len(replies) < 3:
@@ -349,13 +353,6 @@ def conversation_has_three_distinct_turns(evaluable: Evaluable) -> Evaluation:
         )
 
     second_text = replies[1][1]
-    if not _NOTION_LINK.search(second_text):
-        return Evaluation(
-            score=0.0,
-            reasoning=(
-                f"Second turn ({replies[1][0]}) did not include a Notion link to the saved PRD."
-            ),
-        )
     second_lower = second_text.lower()
     prototype_markers = (
         "prototype",
@@ -373,15 +370,13 @@ def conversation_has_three_distinct_turns(evaluable: Evaluable) -> Evaluation:
         )
 
     third_text = replies[2][1]
-    if not _VERCEL_LINK.search(third_text):
+    if third_text.strip() == "":
         return Evaluation(
             score=0.0,
-            reasoning=(
-                f"Third turn ({replies[2][0]}) did not include a Vercel prototype URL."
-            ),
+            reasoning=(f"Third turn ({replies[2][0]}) was empty."),
         )
 
     return Evaluation(
         score=1.0,
-        reasoning="Three-turn shape matched: options → PRD link + ask → Vercel link.",
+        reasoning="Three-turn shape matched: options → prototype ask → final reply.",
     )

@@ -382,6 +382,9 @@ _NOTION_PAGE_URL_PATTERN = re.compile(
     r"https?://(?:www\.)?notion\.(?:so|site)/[^\s)>\]]+",
     re.IGNORECASE,
 )
+_NOTION_PAGE_ID_PATTERN = re.compile(
+    r"\b([0-9a-fA-F]{32}|[0-9a-fA-F]{8}(?:-[0-9a-fA-F]{4}){3}-[0-9a-fA-F]{12})\b"
+)
 
 
 async def _persist_prd_artifact(
@@ -448,7 +451,10 @@ def _build_prd_reply(
             f"PRD for option #{option_number} saved to Notion (page link not returned)."
         )
     else:
-        prd_line = f"PRD for option #{option_number} drafted internally (Notion write was not available)."
+        prd_line = (
+            f"PRD for option #{option_number} drafted internally "
+            "(Notion write was not available)."
+        )
     return f"{prd_line}\nWant me to spin up a quick clickable prototype for it next?"
 
 
@@ -517,9 +523,15 @@ def _extract_notion_url(result: str | None) -> str | None:
     if result is None:
         return None
     match = _NOTION_PAGE_URL_PATTERN.search(result)
-    if match is None:
+    if match is not None:
+        return match.group(0)
+
+    id_match = _NOTION_PAGE_ID_PATTERN.search(result)
+    if id_match is None:
         return None
-    return match.group(0)
+
+    page_id = id_match.group(1).replace("-", "")
+    return f"https://www.notion.so/{page_id}"
 
 
 def _compact_hypothesis_reply(content: str) -> str:
@@ -571,7 +583,10 @@ def _build_prototype_review_reply(summary: str) -> str:
     url = _extract_url(summary)
     prototype_summary = _extract_prefixed_line(summary, "Prototype summary:")
     if prototype_summary is None:
-        prototype_summary = "The concept turns the selected retention idea into a lighter weekly prep loop."
+        prototype_summary = (
+            "The concept turns the selected retention idea into a lighter weekly "
+            "prep loop."
+        )
 
     lines = []
     if url is not None:

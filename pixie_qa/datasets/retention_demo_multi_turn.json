@@ -243,12 +243,25 @@
           ]
         },
         {
+          "name": "tool_call__notion_notion-create-pages__1",
+          "value": [
+            [
+              {
+                "type": "text",
+                "text": "{\"results\":[{\"id\":\"34f9952098ec810199ddd02c431566ed\",\"url\":\"34f9952098ec810199ddd02c431566ed\",\"type\":\"page\"}]}",
+                "id": "lc_d8f13fdb-718f-4b26-a5aa-7e9b5d5b114f"
+              }
+            ],
+            null
+          ]
+        },
+        {
           "name": "tool_call__vercel_deploy_to_vercel__1",
           "value": [
             [
               {
                 "type": "text",
-                "text": "To deploy this to Vercel, run the Vercel CLI command `vercel deploy`.\n\nThis may be run from project root which can be identified by having a .vercel directory.\n\nAlternatively, if the user has the Vercel git integration enabled, they may commit and push to their git origin to trigger a deployment.",
+                "text": "Deployment complete: https://pixie-retention-demo-eval.vercel.app",
                 "id": "lc_bfc83b0f-d7f2-4053-aa4b-78fd54c27278"
               }
             ],

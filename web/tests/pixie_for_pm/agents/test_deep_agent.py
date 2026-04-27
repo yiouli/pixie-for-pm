@@ -62,6 +62,36 @@ class _RetryingDeepAgent:
         return {"messages": [AIMessage(content="Recovered after retry")]}
 
 
+class _InvalidNotionUrlRetryingDeepAgent:
+    def __init__(self) -> None:
+        self.calls: list[list[BaseMessage]] = []
+
+    async def ainvoke(
+        self,
+        inputs: object,
+        config: object | None = None,
+    ) -> dict[str, object]:
+        del config
+        if not isinstance(inputs, dict):
+            raise AssertionError("expected dict inputs")
+        messages = inputs.get("messages")
+        if not isinstance(messages, list):
+            raise AssertionError("expected list of messages")
+        self.calls.append(messages)
+        if len(self.calls) == 1:
+            raise ToolException(
+                " ".join(
+                    (
+                        '{"name":"APIResponseError",',
+                        '"code":"validation_error",',
+                        '"status":400,',
+                        '"message":"Invalid URL: notion://docs/enhanced-markdown-spec"}',
+                    )
+                )
+            )
+        return {"messages": [AIMessage(content="Recovered after invalid URL retry")]}
+
+
 class _SingleAttemptAgent:
     def __init__(self, *, fail_with_validation_error: bool) -> None:
         self.fail_with_validation_error = fail_with_validation_error
@@ -310,6 +340,48 @@ async def test_run_deep_agent_recreates_agent_for_validation_retry(
     retry_message = created_agents[1].calls[0][-1]
     assert "update_content" in retry_message.content
     assert "content_updates" in retry_message.content
+
+
+@pytest.mark.asyncio
+async def test_run_deep_agent_retries_invalid_notion_fetch_url_validation_errors(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    agent = _InvalidNotionUrlRetryingDeepAgent()
+    monkeypatch.setattr(
+        "pixie_for_pm.agents.deep_agent.create_deep_agent",
+        lambda **kwargs: agent,
+    )
+
+    result = await run_deep_agent(
+        role=AgentRole.USER_RESEARCHER,
+        agent_name="pixie_user_researcher",
+        system_prompt="Investigate the issue.",
+        context=WorkflowContext(
+            thread_key="discord-thread-409",
+            current_agent=AgentRole.USER_RESEARCHER,
+            user_message="Read the relevant Notion docs and synthesize the findings.",
+            transcript=(),
+            trigger=DiscordTriggerContext(
+                discord_server_id="discord-server-409",
+                discord_user_id="user-409",
+                channel_id=17,
+                thread_id="discord-thread-409",
+                message_id=103,
+                thread_key="discord-thread-409",
+                dispatch_reason="direct_bot_mention",
+            ),
+            toolset=AgentToolset(),
+        ),
+        model="test-model",
+    )
+
+    assert result == "Recovered after invalid URL retry"
+    assert len(agent.calls) == 2
+    retry_message = agent.calls[1][-1]
+    assert isinstance(retry_message.content, str)
+    assert "notion://docs/enhanced-markdown-spec" in retry_message.content
+    assert "do not invent `notion://`" in retry_message.content.lower()
+    assert "search" in retry_message.content.lower()
 
 
 @pytest.mark.asyncio

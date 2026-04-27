@@ -292,6 +292,15 @@ def _handle_demo_handoff(
         )
 
     if demo_payload.stage == PROTOTYPE_SUMMARY_STAGE:
+        if demo_payload.status == BLOCKED_STATUS:
+            return AgentExecution(
+                messages=[
+                    AgentMessage(
+                        agent=AgentRole.COORDINATOR,
+                        content=demo_payload.artifact,
+                    )
+                ]
+            )
         return AgentExecution(
             messages=[
                 AgentMessage(
@@ -366,7 +375,10 @@ def _build_prototype_reply(summary: str) -> str:
             break
 
     if prototype_summary is None:
-        prototype_summary = "The concept turns the selected retention idea into a lighter weekly prep loop."
+        prototype_summary = (
+            "The concept turns the selected retention idea into a lighter weekly "
+            "prep loop."
+        )
 
     lines = []
     if url is not None:

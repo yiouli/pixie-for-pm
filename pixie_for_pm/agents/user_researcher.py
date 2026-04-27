@@ -3,9 +3,9 @@ from __future__ import annotations
 from collections.abc import Awaitable, Callable
 from dataclasses import replace
 
-import pixie
 from langchain_core.language_models.chat_models import BaseChatModel
 
+import pixie
 from pixie_for_pm.agents.deep_agent import DEFAULT_DEEP_AGENT_MODEL, run_deep_agent
 from pixie_for_pm.agents.demo_flow import (
     BLOCKED_STATUS,
@@ -256,6 +256,16 @@ def _build_execution_context(context: WorkflowContext) -> str:
                 "- Before using Notion write tools, inspect the schema and include "
                 "every required parameter exactly. For update_content, provide "
                 "content_updates explicitly."
+            ),
+            (
+                "- Search Notion first before calling `notion_notion-fetch`; only "
+                "reuse an exact page or database ID, or a canonical "
+                "https://www.notion.so/... URL returned by a prior Notion tool "
+                "result."
+            ),
+            (
+                "- Do not invent notion:// locators, slugs, or local docs paths "
+                "for Notion fetch calls."
             ),
             "Connected integrations:",
             integrations,

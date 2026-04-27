@@ -44,6 +44,10 @@ When a PM hands you a PRD, turn it into:
 """.strip()
 
 _URL_PATTERN = re.compile(r"https?://\S+")
+_VERCEL_URL_PATTERN = re.compile(
+    r"https?://[^\s)>\]]*vercel\.app[^\s)>\]]*",
+    re.IGNORECASE,
+)
 
 
 def build_product_designer_handler(
@@ -130,7 +134,35 @@ async def _handle_demo_prototype_brief(
             brief=brief,
         ),
     )
-    deployment_result = await _publish_demo_prototype(context, summary=summary)
+    deployment_result, deployment_url = await _publish_demo_prototype(
+        context,
+        summary=summary,
+    )
+    if deployment_url is None:
+        blocked_artifact = pixie.wrap(
+            _build_blocked_prototype_artifact(
+                summary=summary,
+                deployment_result=deployment_result,
+            ),
+            purpose="state",
+            name="prototype_artifact",
+            description="Prototype summary or blocker returned from the designer to the PM.",
+        )
+        return AgentExecution(
+            messages=[],
+            handoffs=[
+                AgentHandoff(
+                    source_agent=AgentRole.PRODUCT_DESIGNER,
+                    target_agent=AgentRole.COORDINATOR,
+                    reason=serialize_demo_handoff(
+                        stage=PROTOTYPE_SUMMARY_STAGE,
+                        status=BLOCKED_STATUS,
+                        artifact=blocked_artifact,
+                    ),
+                )
+            ],
+        )
+
     artifact = _build_prototype_artifact(
         summary=summary,
         deployment_result=deployment_result,
@@ -198,21 +230,29 @@ def _build_demo_execution_context(context: WorkflowContext, *, brief: str) -> st
 
 async def _publish_demo_prototype(
     context: WorkflowContext, *, summary: str
-) -> str | None:
+) -> tuple[str | None, str | None]:
     project_listing = await _invoke_text_tool(
         context,
         "vercel_list_projects",
         {"team_name": None},
     )
     project_name = _pick_project_name(project_listing)
-    return await _invoke_text_tool(
-        context,
-        "vercel_create_deployment",
+    deploy_tool = _find_deploy_tool(context)
+    if deploy_tool is None:
+        return None, None
+
+    payload = _filter_tool_payload(
+        deploy_tool,
         {
             "project_name": project_name,
             "deployment_summary": _deployment_summary(summary),
         },
     )
+    result = await deploy_tool.ainvoke(payload)
+    if isinstance(result, tuple):
+        result = result[0]
+    deployment_result = None if result is None else str(result)
+    return deployment_result, _extract_vercel_url(deployment_result)
 
 
 def _build_prototype_artifact(*, summary: str, deployment_result: str | None) -> str:
@@ -221,6 +261,27 @@ def _build_prototype_artifact(*, summary: str, deployment_result: str | None) ->
         lines.append(f"Deployment result: {deployment_result}")
     lines.append(summary.strip())
     return "\n\n".join(line for line in lines if line)
+
+
+def _build_blocked_prototype_artifact(
+    *,
+    summary: str,
+    deployment_result: str | None,
+) -> str:
+    prototype_summary = _extract_prefixed_line(summary, "Prototype summary:")
+    if prototype_summary is None:
+        prototype_summary = _truncate_words(_clean_text(summary), 24)
+
+    lines = [
+        (
+            "I translated the PRD into a prototype plan, but I could not publish "
+            "a live Vercel URL from the available runtime tool."
+        )
+    ]
+    if deployment_result is not None:
+        lines.append(f"Deployment blocker: {deployment_result}")
+    lines.append(f"Prototype summary: {prototype_summary}")
+    return "\n\n".join(lines)
 
 
 def _deployment_summary(summary: str) -> str:
@@ -267,6 +328,42 @@ def _find_tool(context: WorkflowContext, tool_name: str) -> BaseTool | None:
         if tool.name == tool_name:
             return tool
     return None
+
+
+def _find_deploy_tool(context: WorkflowContext) -> BaseTool | None:
+    for tool_name in ("vercel_create_deployment", "vercel_deploy_to_vercel"):
+        tool = _find_tool(context, tool_name)
+        if tool is not None:
+            return tool
+
+    for tool in context.toolset.tools:
+        lowered = tool.name.casefold()
+        if "vercel" in lowered and "deploy" in lowered:
+            return tool
+    return None
+
+
+def _filter_tool_payload(
+    tool: BaseTool,
+    payload: dict[str, object],
+) -> dict[str, object]:
+    args_schema = tool.args_schema
+    if args_schema is None or isinstance(args_schema, dict):
+        return payload
+
+    field_names = set(args_schema.model_fields)
+    if not field_names:
+        return {}
+    return {key: value for key, value in payload.items() if key in field_names}
+
+
+def _extract_vercel_url(result: str | None) -> str | None:
+    if result is None:
+        return None
+    match = _VERCEL_URL_PATTERN.search(result)
+    if match is None:
+        return None
+    return match.group(0)
 
 
 async def _invoke_text_tool(

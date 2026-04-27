@@ -28,6 +28,7 @@ logger = logging.getLogger(__name__)
 _REQUIRED_TOOL_PARAMETER_PATTERN = re.compile(
     r'The\s+"?(?P<tool>[^"\\]+)"?\s+command\s+requires\s+a\s+"?(?P<parameter>[^"\\]+)"?\s+parameter'
 )
+_INVALID_URL_PATTERN = re.compile(r"Invalid URL:\s*(?P<url>\S+)")
 
 ExecutionContextBuilder = Callable[[WorkflowContext], str | None]
 PreflightCheck = Callable[[WorkflowContext], AgentExecution | None]
@@ -390,7 +391,36 @@ def _build_tool_validation_retry_guidance(
     normalized_message = str(exc).replace('\\\\"', '"').replace('\\"', '"')
     match = _REQUIRED_TOOL_PARAMETER_PATTERN.search(normalized_message)
     if match is None:
-        return None
+        invalid_url_match = _INVALID_URL_PATTERN.search(normalized_message)
+        if invalid_url_match is not None:
+            invalid_url = invalid_url_match.group("url").rstrip('".,')
+            return (
+                "unknown",
+                "identifier",
+                (
+                    "Your last tool call failed validation because one of the values "
+                    "was invalid. Retry the same step, but do not reuse the failing "
+                    f"value `{invalid_url}`. Search Notion first, then pass the exact "
+                    "page or database ID, or the canonical https://www.notion.so/... "
+                    "URL returned by `notion_notion-search` or a prior Notion tool "
+                    "result. Do not invent `notion://` locators, local docs paths, "
+                    "or slugs."
+                ),
+            )
+
+        if "validation_error" not in normalized_message.lower():
+            return None
+
+        return (
+            "unknown",
+            "unknown",
+            (
+                "Your last tool call failed validation. Retry the same step after "
+                "repairing the invalid arguments. Reuse exact identifiers and values "
+                "from prior tool output instead of inventing them. Error: "
+                f"{_summarize_validation_error(normalized_message)}"
+            ),
+        )
 
     tool_name = match.group("tool")
     parameter_name = match.group("parameter")
@@ -404,6 +434,13 @@ def _build_tool_validation_retry_guidance(
             "as defined by the tool before continuing."
         ),
     )
+
+
+def _summarize_validation_error(message: str, *, max_length: int = 240) -> str:
+    compact_message = " ".join(message.split())
+    if len(compact_message) <= max_length:
+        return compact_message
+    return f"{compact_message[: max_length - 3]}..."
 
 
 def _deep_agent_config() -> dict[str, int]:

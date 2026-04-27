@@ -29,7 +29,7 @@ None in the current version. The retention demo is scored entirely with mechanic
    Criterion: all public replies stay under the message-length guardrail and avoid dumping long artifacts into chat.
    Applies to: all items.
 7. `pixie_qa/evaluators.py:conversation_has_three_distinct_turns`
-   Criterion: the conversation follows the expected three-turn demo shape of options, PRD handoff, and prototype handoff.
+   Criterion: the conversation keeps the expected three-turn demo shape of options, a PRD follow-up question, and a third coordinator reply after the designer step. Link checks stay separate.
    Applies to: all items.
 
 ## Applicability summary

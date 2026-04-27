@@ -4,10 +4,12 @@ from langchain_core.tools import StructuredTool
 from pydantic import BaseModel, Field
 
 from pixie_for_pm.agents.demo_flow import (
+    BLOCKED_STATUS,
     OPTIONS_SUMMARY_STAGE,
     PRD_BRIEF_STAGE,
     PRD_READY_STAGE,
     PROTOTYPE_BRIEF_STAGE,
+    PROTOTYPE_SUMMARY_STAGE,
     RESEARCH_BRIEF_STAGE,
     RESEARCH_FINDINGS_STAGE,
     parse_demo_handoff,
@@ -21,6 +23,7 @@ from pixie_for_pm.agents.registry import (
     build_user_researcher_handler,
     default_agent_handlers,
 )
+from pixie_for_pm.agents.user_researcher import _build_execution_context
 from pixie_for_pm.domain.models import AgentMessage, AgentRole, WorkflowContext
 from pixie_for_pm.integrations.toolset import (
     AgentToolset,
@@ -47,6 +50,10 @@ class _NotionUpdateArgs(BaseModel):
     content_updates: str = Field()
 
 
+class _NotionCreatePagesArgs(BaseModel):
+    pages: list[dict[str, object]] = Field()
+
+
 class _VercelListProjectsArgs(BaseModel):
     team_name: str | None = Field(default=None)
 
@@ -54,6 +61,47 @@ class _VercelListProjectsArgs(BaseModel):
 class _VercelCreateDeploymentArgs(BaseModel):
     project_name: str = Field()
     deployment_summary: str = Field()
+
+
+class _VercelDeployToVercelArgs(BaseModel):
+    project_name: str | None = Field(default=None)
+    deployment_summary: str | None = Field(default=None)
+
+
+def test_user_researcher_execution_context_requires_search_before_fetch() -> None:
+    context = _build_execution_context(
+        WorkflowContext(
+            thread_key="discord-thread-context",
+            current_agent=AgentRole.USER_RESEARCHER,
+            user_message="Synthesize the research.",
+            transcript=(),
+            trigger=DiscordTriggerContext(
+                discord_server_id="discord-server-context",
+                discord_user_id="user-context",
+                channel_id=10,
+                thread_id="discord-thread-context",
+                message_id=99,
+                thread_key="discord-thread-context",
+                dispatch_reason="direct_bot_mention",
+            ),
+            toolset=AgentToolset(
+                integrations=(
+                    ConnectedIntegration(
+                        provider_id="notion",
+                        provider_name="Notion",
+                        auth_type="oauth2",
+                        status="active",
+                        scopes=("read_content",),
+                        tool_names=("notion_notion-search", "notion_notion-fetch"),
+                    ),
+                )
+            ),
+        )
+    )
+
+    assert "search notion first" in context.lower()
+    assert "do not invent notion:// locators" in context.lower()
+    assert "notion_notion-fetch" in context
 
 
 @pytest.mark.asyncio
@@ -561,6 +609,77 @@ async def test_product_manager_handler_handoffs_to_designer_on_prototype_approva
 
 
 @pytest.mark.asyncio
+async def test_product_manager_handler_surfaces_notion_url_from_create_page_identifier() -> (
+    None
+):
+    async def _notion_create_pages(pages: list[dict[str, object]]) -> str:
+        properties = pages[0].get("properties")
+        assert isinstance(properties, dict)
+        assert properties.get("title") == "Retention Demo PRD - Option #2"
+        return (
+            '{"results":[{"id":"34f9952098ec810199ddd02c431566ed",'
+            '"url":"34f9952098ec810199ddd02c431566ed","type":"page"}]}'
+        )
+
+    handler = build_product_manager_handler(
+        model=_ToolCallingFakeListChatModel(
+            responses=["Problem statement\nUsers do not build a repeat weekly habit."]
+        )
+    )
+
+    execution = await handler(
+        WorkflowContext(
+            thread_key="discord-thread-1",
+            current_agent=AgentRole.PRODUCT_MANAGER,
+            user_message="Go deeper on option #2.",
+            transcript=(),
+            trigger=DiscordTriggerContext(
+                discord_server_id="discord-server-1",
+                discord_user_id="user-1",
+                channel_id=10,
+                thread_id="discord-thread-1",
+                message_id=99,
+                thread_key="discord-thread-1",
+                dispatch_reason="reply_to_bot",
+            ),
+            toolset=AgentToolset(
+                tools=(
+                    StructuredTool.from_function(
+                        coroutine=_notion_create_pages,
+                        name="notion_notion-create-pages",
+                        description="Create Notion pages.",
+                        args_schema=_NotionCreatePagesArgs,
+                    ),
+                ),
+                integrations=(
+                    ConnectedIntegration(
+                        provider_id="notion",
+                        provider_name="Notion",
+                        auth_type="oauth2",
+                        status="active",
+                        scopes=("write_content",),
+                        tool_names=("notion_notion-create-pages",),
+                    ),
+                ),
+            ),
+            handoff_context=serialize_demo_handoff(
+                stage=PRD_BRIEF_STAGE,
+                artifact="Selected option: #2",
+            ),
+        )
+    )
+
+    demo_payload = parse_demo_handoff(execution.handoffs[0].reason)
+    assert demo_payload is not None
+    assert demo_payload.stage == PRD_READY_STAGE
+    assert (
+        "https://www.notion.so/34f9952098ec810199ddd02c431566ed"
+        in demo_payload.artifact
+    )
+    assert "spin up a quick clickable prototype" in demo_payload.artifact.lower()
+
+
+@pytest.mark.asyncio
 async def test_product_designer_handler_publishes_demo_prototype_before_pm_handoff() -> (
     None
 ):
@@ -661,6 +780,143 @@ async def test_product_designer_handler_publishes_demo_prototype_before_pm_hando
     assert (
         "https://pixie-retention-demo-eval.vercel.app" in execution.handoffs[0].reason
     )
+
+
+@pytest.mark.asyncio
+async def test_product_designer_handler_marks_manual_vercel_deploy_as_blocked() -> None:
+    tool_calls: list[dict[str, str | None]] = []
+
+    async def _vercel_list_projects(team_name: str | None = None) -> str:
+        tool_calls.append({"tool": "vercel_list_projects", "team_name": team_name})
+        return "pixie-retention-demo"
+
+    async def _vercel_deploy_to_vercel(
+        project_name: str | None = None,
+        deployment_summary: str | None = None,
+    ) -> str:
+        tool_calls.append(
+            {
+                "tool": "vercel_deploy_to_vercel",
+                "project_name": project_name,
+                "deployment_summary": deployment_summary,
+            }
+        )
+        return "To deploy this to Vercel, run the Vercel CLI command `vercel deploy`."
+
+    handler = build_product_designer_handler(
+        model=_ToolCallingFakeListChatModel(
+            responses=[
+                (
+                    "Prototype summary: A weekly prep loop surfaces one suggested "
+                    "follow-up before each 1:1.\n\n"
+                    "Core user journey\n1. Open prep.\n2. Review one suggested "
+                    "follow-up.\n3. Carry it into the agenda.\n\n"
+                    "Critical screens and states\n"
+                    "Prep recap, suggestion card, agenda state.\n\n"
+                    "Interaction model\n"
+                    "Lightweight, evidence-backed recommendation.\n\n"
+                    "Open questions\nHow much evidence detail managers need."
+                )
+            ]
+        )
+    )
+
+    execution = await handler(
+        WorkflowContext(
+            thread_key="discord-thread-1",
+            current_agent=AgentRole.PRODUCT_DESIGNER,
+            user_message="Go deeper on option #2.",
+            transcript=(),
+            trigger=DiscordTriggerContext(
+                discord_server_id="discord-server-1",
+                discord_user_id="user-1",
+                channel_id=10,
+                thread_id="discord-thread-1",
+                message_id=99,
+                thread_key="discord-thread-1",
+                dispatch_reason="reply_to_bot",
+            ),
+            toolset=AgentToolset(
+                tools=(
+                    StructuredTool.from_function(
+                        coroutine=_vercel_list_projects,
+                        name="vercel_list_projects",
+                        description="List Vercel projects.",
+                        args_schema=_VercelListProjectsArgs,
+                    ),
+                    StructuredTool.from_function(
+                        coroutine=_vercel_deploy_to_vercel,
+                        name="vercel_deploy_to_vercel",
+                        description="Deploy to Vercel.",
+                        args_schema=_VercelDeployToVercelArgs,
+                    ),
+                ),
+                integrations=(
+                    ConnectedIntegration(
+                        provider_id="vercel",
+                        provider_name="Vercel",
+                        auth_type="oauth2",
+                        status="active",
+                        scopes=("projects.read", "deployments.write"),
+                        tool_names=("vercel_list_projects", "vercel_deploy_to_vercel"),
+                    ),
+                ),
+            ),
+            handoff_context=serialize_demo_handoff(
+                stage=PROTOTYPE_BRIEF_STAGE,
+                artifact="PRD content",
+            ),
+        )
+    )
+
+    assert [call["tool"] for call in tool_calls] == [
+        "vercel_list_projects",
+        "vercel_deploy_to_vercel",
+    ]
+    demo_payload = parse_demo_handoff(execution.handoffs[0].reason)
+    assert demo_payload is not None
+    assert demo_payload.stage == PROTOTYPE_SUMMARY_STAGE
+    assert demo_payload.status == BLOCKED_STATUS
+    assert "could not publish" in demo_payload.artifact.lower()
+    assert "vercel deploy" in demo_payload.artifact.lower()
+
+
+@pytest.mark.asyncio
+async def test_dispatcher_handler_surfaces_blocked_prototype_status_honestly() -> None:
+    handler = build_dispatcher_handler()
+
+    execution = await handler(
+        WorkflowContext(
+            thread_key="discord-thread-1",
+            current_agent=AgentRole.COORDINATOR,
+            user_message="sure",
+            transcript=(),
+            trigger=DiscordTriggerContext(
+                discord_server_id="discord-server-1",
+                discord_user_id="user-1",
+                channel_id=10,
+                thread_id="discord-thread-1",
+                message_id=101,
+                thread_key="discord-thread-1",
+                dispatch_reason="reply_to_bot",
+            ),
+            toolset=AgentToolset(),
+            handoff_context=serialize_demo_handoff(
+                stage=PROTOTYPE_SUMMARY_STAGE,
+                status=BLOCKED_STATUS,
+                artifact=(
+                    "I translated the PRD into a prototype plan, but I could not "
+                    "publish a live Vercel URL. The available Vercel tool only "
+                    "returned manual deployment instructions: run `vercel deploy`."
+                ),
+            ),
+        )
+    )
+
+    assert execution.handoffs == []
+    assert execution.messages[0].agent is AgentRole.COORDINATOR
+    assert "could not publish" in execution.messages[0].content.lower()
+    assert "prototype draft is ready" not in execution.messages[0].content.lower()
 
 
 def test_product_manager_prompt_spells_out_lenny_style_prd_sections() -> None:
