@@ -4,11 +4,15 @@ import re
 from collections.abc import Awaitable, Callable
 from dataclasses import replace
 
-import pixie
 from langchain_core.language_models.chat_models import BaseChatModel
 from langchain_core.tools import BaseTool
 
-from pixie_for_pm.agents.deep_agent import DEFAULT_DEEP_AGENT_MODEL, run_deep_agent
+import pixie
+from pixie_for_pm.agents.deep_agent import (
+    DEFAULT_DEEP_AGENT_MODEL,
+    build_notion_tool_guidance,
+    run_deep_agent,
+)
 from pixie_for_pm.agents.demo_flow import (
     BLOCKED_STATUS,
     PROTOTYPE_BRIEF_STAGE,
@@ -199,10 +203,26 @@ def _build_execution_context(context: WorkflowContext) -> str:
     if not integrations:
         integrations = ["- No connected integrations were detected."]
 
+    notion_guidance = (
+        build_notion_tool_guidance(fetch_tool_name="notion_notion-fetch")
+        if _has_notion_integration(context)
+        else ()
+    )
+    vercel_guidance = (
+        (
+            "- The runtime will create a new Next.js project for this prototype "
+            "build. Do not assume an existing Vercel project should be reused.",
+        )
+        if _find_vercel_integration(context) is not None
+        else ()
+    )
+
     return "\n".join(
         (
             "Execution context:",
             "- Use connected tools when they materially improve the design artifact.",
+            *notion_guidance,
+            *vercel_guidance,
             "Connected integrations:",
             *integrations,
         )
@@ -220,6 +240,10 @@ def _build_demo_execution_context(context: WorkflowContext, *, brief: str) -> st
                 "prototype was published; the runtime will handle the Vercel deployment."
             ),
             (
+                "Assume the runtime will create a brand new Next.js project for this "
+                "prototype build instead of reusing an existing Vercel project."
+            ),
+            (
                 "Use this exact structure: `Prototype summary: <one sentence>` on the "
                 "first line, then sections for Core user journey, Critical screens and "
                 "states, Interaction model, and Open questions."
@@ -231,12 +255,7 @@ def _build_demo_execution_context(context: WorkflowContext, *, brief: str) -> st
 async def _publish_demo_prototype(
     context: WorkflowContext, *, summary: str
 ) -> tuple[str | None, str | None]:
-    project_listing = await _invoke_text_tool(
-        context,
-        "vercel_list_projects",
-        {"team_name": None},
-    )
-    project_name = _pick_project_name(project_listing)
+    project_name = _build_demo_project_name(context)
     deploy_tool = _find_deploy_tool(context)
     if deploy_tool is None:
         return None, None
@@ -286,11 +305,17 @@ def _build_blocked_prototype_artifact(
     return "\n\n".join(lines)
 
 
-def _deployment_summary(summary: str) -> str:
+def _deployment_summary(summary: str, *, project_name: str) -> str:
     prototype_summary = _extract_prefixed_line(summary, "Prototype summary:")
     if prototype_summary is not None:
-        return prototype_summary
-    return _truncate_words(_clean_text(summary), 24)
+        return (
+            f"Create a new Next.js project named {project_name} for this clickable "
+            f"prototype. Prototype summary: {prototype_summary}"
+        )
+    return (
+        f"Create a new Next.js project named {project_name} for this clickable "
+        f"prototype. Prototype summary: {_truncate_words(_clean_text(summary), 24)}"
+    )
 
 
 def _build_prototype_files(*, summary: str, project_name: str) -> dict[str, str]:
@@ -329,12 +354,7 @@ def _escape_html(text: str) -> str:
 def _pick_project_name(project_listing: str | None) -> str:
     if project_listing is None:
         return "pixie-retention-demo"
-
-    for raw_line in project_listing.splitlines():
-        line = raw_line.strip().lstrip("-* ").strip()
-        if line != "":
-            return line.split()[0]
-    return "pixie-retention-demo"
+    return f"pixie-retention-demo-{slug}"
 
 
 def _extract_prefixed_line(text: str, prefix: str) -> str | None:
@@ -421,6 +441,13 @@ def _find_vercel_integration(context: WorkflowContext) -> ConnectedIntegration |
         if integration.provider_id == "vercel" and integration.status == "active":
             return integration
     return None
+
+
+def _has_notion_integration(context: WorkflowContext) -> bool:
+    for integration in context.toolset.integrations:
+        if integration.provider_id == "notion" and integration.status == "active":
+            return True
+    return False
 
 
 __all__ = [

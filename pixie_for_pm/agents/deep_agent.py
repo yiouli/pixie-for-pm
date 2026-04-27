@@ -34,6 +34,31 @@ ExecutionContextBuilder = Callable[[WorkflowContext], str | None]
 PreflightCheck = Callable[[WorkflowContext], AgentExecution | None]
 
 
+def build_notion_tool_guidance(
+    *,
+    fetch_tool_name: str,
+    include_write_schema_guidance: bool = False,
+) -> tuple[str, ...]:
+    guidance: list[str] = []
+    if include_write_schema_guidance:
+        guidance.append(
+            "- Before using Notion write tools, inspect the schema and include "
+            "every required parameter exactly. For update_content, provide "
+            "content_updates explicitly."
+        )
+    guidance.extend(
+        (
+            f"- Search Notion first before calling `{fetch_tool_name}`; only "
+            "reuse an exact page or database ID, or a canonical "
+            "https://www.notion.so/... URL returned by a prior Notion tool "
+            "result.",
+            "- Do not invent notion:// locators, slugs, or local docs paths "
+            "for Notion fetch calls.",
+        )
+    )
+    return tuple(guidance)
+
+
 async def run_deep_agent(
     *,
     role: AgentRole,
@@ -495,6 +520,7 @@ __all__ = [
     "DEFAULT_DEEP_AGENT_MODEL",
     "ExecutionContextBuilder",
     "PreflightCheck",
+    "build_notion_tool_guidance",
     "build_deep_agent_handler",
     "run_deep_agent",
 ]
