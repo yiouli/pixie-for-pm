@@ -421,9 +421,7 @@ async def _refresh_mcp_token(
             },
         )
     if response.status_code >= 400:
-        raise OAuthProviderError(
-            f"OAuth refresh failed for provider '{provider}'."
-        )
+        raise OAuthProviderError(f"OAuth refresh failed for provider '{provider}'.")
 
     return _parse_token_response(response)
 
@@ -601,7 +599,9 @@ async def _discover_oauth_metadata(mcp_server_url: str) -> OAuthMetadata:
         authorization_endpoint=authorization_endpoint,
         token_endpoint=token_endpoint,
         registration_endpoint=registration_endpoint,
-        resource=resource if isinstance(resource, str) and resource.strip() != "" else None,
+        resource=(
+            resource if isinstance(resource, str) and resource.strip() != "" else None
+        ),
         scopes_supported=scopes_supported,
     )
 

@@ -153,10 +153,7 @@ async def test_hosted_mcp_provider_refreshes_unauthorized_tokens_and_retries() -
     tools = await provider.load_tools(credentials=credentials, trigger=_trigger())
 
     assert [tool.name for tool in tools] == ["search"]
-    assert [
-        call["connection"]
-        for call in calls
-    ] == [
+    assert [call["connection"] for call in calls] == [
         {
             "transport": "streamable_http",
             "url": "https://mcp.notion.com/mcp",
@@ -173,7 +170,9 @@ async def test_hosted_mcp_provider_refreshes_unauthorized_tokens_and_retries() -
 
 
 @pytest.mark.asyncio
-async def test_hosted_mcp_provider_requires_reconnect_for_legacy_unauthorized_tokens() -> None:
+async def test_hosted_mcp_provider_requires_reconnect_for_legacy_unauthorized_tokens() -> (
+    None
+):
     async def _loader(
         session: object | None,
         **kwargs: object,
