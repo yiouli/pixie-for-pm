@@ -43,8 +43,6 @@ def test_load_settings_supports_web_server_configuration() -> None:
             "NOTION_CLIENT_SECRET": "notion-secret",
             "GITHUB_CLIENT_ID": "github-id",
             "GITHUB_CLIENT_SECRET": "github-secret",
-            "VERCEL_CLIENT_ID": "vercel-id",
-            "VERCEL_CLIENT_SECRET": "vercel-secret",
             "AIRTABLE_CLIENT_ID": "airtable-id",
             "AIRTABLE_CLIENT_SECRET": "airtable-secret",
             "PRODUCT_MANAGER_MODEL": "openai:gpt-5.2-codex",
@@ -68,12 +66,12 @@ def test_load_settings_supports_web_server_configuration() -> None:
     )
     assert settings.oauth_client_ids["notion"] == "notion-id"
     assert settings.oauth_client_ids["github"] == "github-id"
-    assert settings.oauth_client_ids["vercel"] == "vercel-id"
     assert settings.oauth_client_ids["airtable"] == "airtable-id"
+    assert "vercel" not in settings.oauth_client_ids
     assert settings.oauth_client_secrets["notion"] == "notion-secret"
     assert settings.oauth_client_secrets["github"] == "github-secret"
-    assert settings.oauth_client_secrets["vercel"] == "vercel-secret"
     assert settings.oauth_client_secrets["airtable"] == "airtable-secret"
+    assert "vercel" not in settings.oauth_client_secrets
     assert settings.product_manager_model == "openai:gpt-5.2-codex"
 
 

@@ -39,8 +39,8 @@ def _oauth_settings() -> dict[str, str]:
         {
             "WEB_APP_URL": "http://localhost:8000",
             "OAUTH_CALLBACK_URL": "http://localhost:8000/api/connections/oauth/callback",
-            "VERCEL_CLIENT_ID": "vercel-id",
-            "VERCEL_CLIENT_SECRET": "vercel-secret",
+            "NOTION_CLIENT_ID": "notion-id",
+            "NOTION_CLIENT_SECRET": "notion-secret",
         }
     )
     return settings
@@ -166,97 +166,6 @@ def test_oauth_authorize_and_callback_store_tokens_and_redirect_back_to_settings
         "access_token": "oauth-access-token",
         "refresh_token": "oauth-refresh-token",
         "token_type": "bearer",
-    }
-
-
-def test_vercel_authorize_and_callback_use_mcp_flow_context_cookie(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    store = _make_store()
-    app = create_app(
-        load_settings(_oauth_settings()),
-        store=store,
-        oauth_service=StaticOAuthService(authorize_urls={}, token_payloads={}),
-    )
-    app.dependency_overrides[get_current_user] = lambda: _OWNER
-    client = TestClient(app, base_url="https://api.pixie.test")
-    client.post("/api/servers/server-123/claim")
-    cipher = CredentialCipher(_FERNET_KEY)
-
-    class _PreparedAuthorization:
-        def __init__(self, authorize_url: str) -> None:
-            self.authorize_url = authorize_url
-            self.code_verifier = "vercel-code-verifier"
-            self.client_id = "vercel-registered-client-id"
-            self.client_secret = None
-            self.resource = "https://mcp.vercel.com/"
-
-    async def _prepare(**kwargs: Any) -> _PreparedAuthorization:
-        assert kwargs["client_id"] == "vercel-id"
-        assert kwargs["client_secret"] == "vercel-secret"
-        return _PreparedAuthorization(
-            authorize_url="https://vercel.com/oauth/authorize?state=" + kwargs["state"]
-        )
-
-    async def _exchange(**kwargs: Any) -> tuple[dict[str, str], list[str] | None]:
-        assert kwargs["code"] == "code-123"
-        assert kwargs["client_id"] == "vercel-registered-client-id"
-        assert kwargs["code_verifier"] == "vercel-code-verifier"
-        assert kwargs["resource"] == "https://mcp.vercel.com/"
-        return (
-            {
-                "access_token": "mcp-access-token",
-                "refresh_token": "mcp-refresh-token",
-                "token_type": "bearer",
-            },
-            ["openid", "offline_access"],
-        )
-
-    monkeypatch.setattr(
-        "pixie_for_pm.web.routes.connection_routes.prepare_vercel_mcp_authorization",
-        _prepare,
-    )
-    monkeypatch.setattr(
-        "pixie_for_pm.web.routes.connection_routes.exchange_vercel_mcp_code",
-        _exchange,
-    )
-
-    authorize_response = client.get(
-        "/api/connections/vercel/authorize?server_id=server-123&response_mode=json",
-        follow_redirects=False,
-    )
-    state = authorize_response.json()["authorize_url"].split("state=")[1]
-    callback_response = client.get(
-        "/api/connections/oauth/callback",
-        params={
-            "code": "code-123",
-            "state": state,
-        },
-        follow_redirects=False,
-    )
-
-
-    connection = asyncio.get_event_loop().run_until_complete(
-        store.get_connection_by_discord_server("server-123", "vercel")
-    )
-    assert connection is not None
-    decrypted = cipher.decrypt_credentials(connection.credentials_encrypted)
-
-    assert authorize_response.status_code == 200
-    assert authorize_response.json() == {
-        "authorize_url": f"https://vercel.com/oauth/authorize?state={state}"
-    }
-    assert "_oauth_notion_context" in authorize_response.headers.get("set-cookie", "")
-    assert callback_response.status_code == 302
-    assert callback_response.headers["Location"] == (
-        "https://api.pixie.test/settings?server_id=server-123&connected=vercel"
-    )
-    assert decrypted == {
-        "access_token": "mcp-access-token",
-        "refresh_token": "mcp-refresh-token",
-        "token_type": "bearer",
-        "oauth_client_id": "vercel-registered-client-id",
-        "oauth_resource": "https://mcp.vercel.com/",
     }
 
 
@@ -393,16 +302,16 @@ async def test_oauth_flow_prefers_request_host_over_localhost_config(
     class _PreparedAuthorization:
         def __init__(self, authorize_url: str) -> None:
             self.authorize_url = authorize_url
-            self.code_verifier = "vercel-code-verifier"
-            self.client_id = "vercel-registered-client-id"
+            self.code_verifier = "notion-code-verifier"
+            self.client_id = "notion-registered-client-id"
             self.client_secret = None
-            self.resource = "https://mcp.vercel.com/"
+            self.resource = "https://mcp.notion.com/"
 
     async def _prepare(**kwargs: Any) -> _PreparedAuthorization:
         captured["prepare_redirect_uri"] = kwargs["redirect_uri"]
         return _PreparedAuthorization(
             authorize_url=(
-                "https://vercel.com/oauth/authorize?redirect_uri="
+                "https://mcp.notion.com/authorize?redirect_uri="
                 + kwargs["redirect_uri"]
                 + "&state="
                 + kwargs["state"]
@@ -413,19 +322,19 @@ async def test_oauth_flow_prefers_request_host_over_localhost_config(
         captured["exchange_kwargs"] = kwargs
         return (
             {
-                "access_token": "vercel-access-token",
-                "refresh_token": "vercel-refresh-token",
+                "access_token": "notion-access-token",
+                "refresh_token": "notion-refresh-token",
                 "token_type": "bearer",
             },
-            ["openid", "offline_access"],
+            ["read", "write"],
         )
 
     monkeypatch.setattr(
-        "pixie_for_pm.web.routes.connection_routes.prepare_vercel_mcp_authorization",
+        "pixie_for_pm.web.routes.connection_routes.prepare_notion_mcp_authorization",
         _prepare,
     )
     monkeypatch.setattr(
-        "pixie_for_pm.web.routes.connection_routes.exchange_vercel_mcp_code",
+        "pixie_for_pm.web.routes.connection_routes.exchange_notion_mcp_code",
         _exchange,
     )
 
@@ -433,7 +342,7 @@ async def test_oauth_flow_prefers_request_host_over_localhost_config(
     client.post("/api/servers/server-123/claim")
 
     authorize_response = client.get(
-        "/api/connections/vercel/authorize?server_id=server-123",
+        "/api/connections/notion/authorize?server_id=server-123",
         follow_redirects=False,
     )
 
@@ -459,15 +368,15 @@ async def test_oauth_flow_prefers_request_host_over_localhost_config(
     assert captured["exchange_kwargs"] == {
         "code": "code-123",
         "redirect_uri": "https://pixie-preview.vercel.app/api/connections/oauth/callback",
-        "code_verifier": "vercel-code-verifier",
-        "client_id": "vercel-registered-client-id",
+        "code_verifier": "notion-code-verifier",
+        "client_id": "notion-registered-client-id",
         "client_secret": None,
-        "resource": "https://mcp.vercel.com/",
+        "resource": "https://mcp.notion.com/",
     }
     assert callback_response.status_code == 302
     assert callback_response.headers["Location"] == (
         "https://pixie-preview.vercel.app/settings"
-        "?server_id=server-123&connected=vercel"
+        "?server_id=server-123&connected=notion"
     )
 
 

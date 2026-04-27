@@ -55,6 +55,9 @@ class HttpApiKeyValidator(ApiKeyValidator):
         if provider == "fireflies":
             await self._validate_fireflies(credentials)
             return
+        if provider == "vercel":
+            await self._validate_vercel(credentials)
+            return
 
         raise InvalidApiKeyCredentialsError("Unsupported API key provider.")
 
@@ -79,3 +82,12 @@ class HttpApiKeyValidator(ApiKeyValidator):
             )
         if response.status_code >= 400:
             raise InvalidApiKeyCredentialsError("Fireflies credentials were rejected.")
+
+    async def _validate_vercel(self, credentials: Mapping[str, str]) -> None:
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            response = await client.get(
+                "https://api.vercel.com/v2/user",
+                headers={"Authorization": f"Bearer {credentials['access_token']}"},
+            )
+        if response.status_code >= 400:
+            raise InvalidApiKeyCredentialsError("Vercel credentials were rejected.")

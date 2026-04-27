@@ -207,27 +207,6 @@ async def prepare_notion_mcp_authorization(
     )
 
 
-async def prepare_vercel_mcp_authorization(
-    *,
-    state: str,
-    redirect_uri: str,
-    client_name: str,
-    client_uri: str | None = None,
-    client_id: str | None = None,
-    client_secret: str | None = None,
-) -> NotionMcpAuthorization:
-    return await _prepare_mcp_authorization(
-        mcp_server_url="https://mcp.vercel.com",
-        state=state,
-        redirect_uri=redirect_uri,
-        client_name=client_name,
-        client_uri=client_uri,
-        scopes=("openid", "offline_access"),
-        client_id=client_id,
-        client_secret=client_secret,
-    )
-
-
 async def exchange_notion_mcp_code(
     *,
     code: str,
@@ -249,27 +228,6 @@ async def exchange_notion_mcp_code(
     )
 
 
-async def exchange_vercel_mcp_code(
-    *,
-    code: str,
-    redirect_uri: str,
-    code_verifier: str,
-    client_id: str,
-    client_secret: str | None = None,
-    resource: str | None = None,
-) -> tuple[dict[str, str], list[str] | None]:
-    return await _exchange_mcp_code(
-        mcp_server_url="https://mcp.vercel.com",
-        code=code,
-        redirect_uri=redirect_uri,
-        code_verifier=code_verifier,
-        client_id=client_id,
-        client_secret=client_secret,
-        resource=resource,
-        provider="vercel",
-    )
-
-
 async def refresh_notion_mcp_token(
     credentials: dict[str, str] | Mapping[str, str],
 ) -> tuple[dict[str, str], list[str] | None]:
@@ -277,16 +235,6 @@ async def refresh_notion_mcp_token(
         mcp_server_url="https://mcp.notion.com/mcp",
         credentials=credentials,
         provider="notion",
-    )
-
-
-async def refresh_vercel_mcp_token(
-    credentials: dict[str, str] | Mapping[str, str],
-) -> tuple[dict[str, str], list[str] | None]:
-    return await _refresh_mcp_token(
-        mcp_server_url="https://mcp.vercel.com",
-        credentials=credentials,
-        provider="vercel",
     )
 
 
