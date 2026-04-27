@@ -4,6 +4,7 @@ from collections.abc import Awaitable, Callable
 from dataclasses import replace
 
 from langchain_core.language_models.chat_models import BaseChatModel
+import pixie
 
 from pixie_for_pm.agents.deep_agent import DEFAULT_DEEP_AGENT_MODEL, run_deep_agent
 from pixie_for_pm.agents.demo_flow import (
@@ -123,6 +124,17 @@ async def _handle_demo_research_brief(
     openai_api_key: str | None,
 ) -> AgentExecution:
     if _require_notion_integration(context) is not None:
+        blocked_artifact = pixie.wrap(
+            (
+                "I couldn't complete the retention insight pass because Notion is "
+                "not connected for this server. Connect Notion and rerun the "
+                "request so I can pull interview context, prior learnings, and "
+                "transcript evidence."
+            ),
+            purpose="state",
+            name="research_artifact",
+            description="Internal research synthesis or blocker passed back to the PM.",
+        )
         return AgentExecution(
             messages=[],
             handoffs=[
@@ -132,12 +144,7 @@ async def _handle_demo_research_brief(
                     reason=serialize_demo_handoff(
                         stage=RESEARCH_FINDINGS_STAGE,
                         status=BLOCKED_STATUS,
-                        artifact=(
-                            "I couldn't complete the retention insight pass because "
-                            "Notion is not connected for this server. Connect Notion "
-                            "and rerun the request so I can pull interview context, "
-                            "prior learnings, and transcript evidence."
-                        ),
+                        artifact=blocked_artifact,
                     ),
                 )
             ],
@@ -154,6 +161,12 @@ async def _handle_demo_research_brief(
             current_context,
             brief=brief,
         ),
+    )
+    findings = pixie.wrap(
+        findings,
+        purpose="state",
+        name="research_artifact",
+        description="Internal research synthesis passed from the user researcher to the PM.",
     )
     return AgentExecution(
         messages=[],

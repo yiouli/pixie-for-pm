@@ -1,0 +1,815 @@
+BlueSoul — 10:59 PM
+@Pixie  it seems that the career growth feature retention is low, what should we build next to improve that?
+Pixie
+APP
+ — 11:00 PM
+Here's how I'm thinking about this:
+Before I recommend what to build next, I want to confirm where retention is breaking, which repeat-use barrier matters most, and what behavior change is most likely to move the metric.
+
+Planned steps:
+Ask the user researcher to pull the strongest existing evidence and patterns.
+Synthesize the biggest retention barrier and the most promising leverage points.
+Come back with three hypotheses and a recommendation on which one to deepen.
+Three hypotheses to test next:
+Growth follow-up nudges
+Idea: detect unresolved growth topics from prior 1:1s and prompt the manager with one concrete follow-up before the next meeting.
+Why it should improve retention: this shifts the feature from abstract planning to in-workflow execution. If users get value right before a live 1:1, they have a reason to return every cycle. It also targets the highest-friction gap: people forget to revisit growth conversations.
+High-level proposal: add a pre-1:1 module that surfaces:
+the open growth thread
+the last commitment made
+one suggested follow-up question
+one recommended action to log after the meeting
+Career conversation brief
+Idea: generate a lightweight brief for the manager before a 1:1 with growth themes, evidence from past notes, prior commitments, and the next best question.
+Why it should improve retention: users are more likely to come back for a ready-to-use artifact than for a blank career-planning space. A reusable brief creates immediate value in a real workflow and reinforces trust through specificity.
+High-level proposal: create a one-page “Career Brief” that pulls from recent notes and includes:
+top growth themes
+examples/evidence cited in prior meetings
+unresolved commitments
+risks or missing signals
+one recommended question for this meeting
+Evidence-linked growth frameworks
+Idea: attach a lightweight growth framework to actual meeting evidence instead of showing a generic template or career ladder.
+Why it should improve retention: generic guidance is easy to ignore. Evidence-linked structure is more credible and more actionable because it helps the manager understand what they know, what they’ve observed, and what’s still missing.
+High-level proposal: inside the brief, add a simple framework view that:
+maps notes to a few growth dimensions
+highlights where evidence is strong vs thin
+suggests which dimension to probe next
+avoids requiring users to fill out a standalone rubric upfront
+
+Recommendation: start with option 1. It is the tightest path to repeat usage because it is closest to an existing high-frequency workflow and requires the least behavior change.
+
+Which option should I deepen: 1, 2, or 3?
+BlueSoul — 11:19 PM
+1
+Pixie
+APP
+ — 11:20 PM
+Drafting the PRD, then I’ll package it for the prototype handoff.# Growth Follow-up Nudges
+Product thesis: Pixie should turn every upcoming 1:1 into a higher-value continuation of the last one by surfacing one concrete, unresolved growth follow-up for the manager at the moment they prepare.
+Problem statement
+Pixie’s retention is low because the product is not yet embedded deeply enough in a recurring behavior that users already do: weekly or biweekly 1:1s. Managers may use Pixie once to summarize a conversation or capture notes, but they do not consistently return because the product does not yet create a clear, compounding reason to come back before every next meeting.
+A core failure mode in 1:1s is lack of continuity. Growth-related topics—career goals, skill development, stretch opportunities, blockers, commitments, and coaching advice—are often discussed once and then dropped. This creates a poor employee experience and weakens trust in the value of 1:1s. It also means Pixie misses a natural opportunity to help managers do something meaningfully better the next time they meet.
+The opportunity is to make Pixie useful in the narrow but high-frequency moment immediately before the next 1:1: “What is the one growth topic I should follow up on?” If Pixie can reliably answer that question with a specific prompt grounded in prior conversations, it can create a repeatable use case tied to the recurring meeting loop.
+Why now
+Retention is the top product problem. We need a wedge that drives repeat usage, not another broad feature that adds surface area without changing habits.
+We already have the core ingredients. Pixie has access to prior 1:1 notes/transcripts/summaries and can identify themes, commitments, and unresolved topics without requiring a new system of record.
+The workflow is naturally recurring. 1:1s happen on a regular cadence, which makes pre-meeting preparation an ideal trigger for habit formation.
+The scope is constrained enough for MVP. We do not need to solve full coaching plans or long-term growth tracking; we only need to surface one useful follow-up nudge before the next meeting.
+This aligns with our strongest product promise. Pixie should help managers run better conversations, not just document them after the fact.
+Target user and core job to be done
+Target user: Frontline and mid-level people managers who hold recurring 1:1s and want to be more effective coaches, but have limited prep time and imperfect memory across meetings.
+
+Secondary user: Employees indirectly benefit through more consistent follow-through, but they are not the primary user for MVP.
+Core job to be done:
+Before my next 1:1, help me quickly remember the most important unresolved growth topic to follow up on so I can have a more useful, continuous conversation without extra prep work.
+Key insights and evidence
+Low retention is likely a workflow embedding problem, not just a feature awareness problem. Users do not yet have a must-return moment.
+Continuity is one of the highest-value, most visibly broken parts of 1:1s. Managers frequently forget prior growth discussions, commitments, and coaching threads.
+A single, concrete suggestion is more actionable than a broad summary. Managers preparing for a meeting do not want another wall of text; they want one sharp prompt they can use immediately.
+Growth topics are especially valuable to follow up on. They signal care, build trust, and are distinct from generic status updates.
+Pre-meeting timing matters. Nudges delivered at the moment of preparation are more likely to be used than passive archival notes.
+Starting with manager-side prompting avoids workflow complexity. We can create value without requiring employee input, approvals, or a dedicated growth plan system.
+Goals and non-goals
+Goals
+Increase repeat usage by making Pixie part of the pre-1:1 preparation workflow.
+Improve continuity across 1:1s by surfacing unresolved growth-related topics from prior meetings.
+Deliver one concrete, low-friction manager prompt that is easy to understand and act on.
+Validate that follow-up nudges increase engagement with pre-1:1 workflows and downstream 1:1 quality signals.
+Non-goals
+Building a full employee development planning product.
+Creating a comprehensive memory system for all prior 1:1 topics.
+Tracking completion of long-term growth plans across systems.
+Sending employee-facing nudges or notifications in MVP.
+Auto-generating full 1:1 agendas in MVP.
+Solving every unresolved topic type; MVP is focused on growth follow-up only.
+In-scope decisions
+Detect unresolved growth-related topics from prior 1:1 content.
+Surface one recommended follow-up nudge before the next meeting.
+Show lightweight rationale/context from prior conversation.
+Allow the manager to use, dismiss, or skip the nudge.
+Instrument end-to-end usage and outcome signals.
+Out-of-scope decisions
+Multiple nudges per meeting.
+Cross-report prioritization across a manager’s whole team.
+Employee-visible action items.
+Admin reporting dashboards.
+Manual rules builders for HR/ops.
+Deep integrations with LMS, HRIS, or performance review systems.
+Hypotheses
+If Pixie surfaces one high-quality unresolved growth follow-up before each 1:1, managers will be more likely to open Pixie before recurring meetings.
+If the nudge is concrete and grounded in prior discussion, managers will perceive Pixie as meaningfully improving meeting quality, not just documenting it.
+If managers act on these nudges, employees will experience stronger continuity in coaching conversations, which will improve perceived product value over time.
+A narrow “one nudge” experience will outperform a broader summary-based experience on clarity, speed, and adoption.
+Even imperfect detection can create value if suggestions are timely, editable, and easy to dismiss.
+
+Solution overview
+Build a pre-1:1 growth follow-up nudge module that appears in the manager’s preparation experience for an upcoming recurring 1:1.
+For each upcoming 1:1, Pixie will:
+Review prior meeting artifacts for that manager-report pair.
+Detect whether a growth-related topic was discussed previously and appears unresolved.
+Generate one recommended follow-up prompt for the manager.
+Present it in a compact card before the meeting with enough context to build trust.
+Let the manager take one of several lightweight actions: use it in prep, add it to agenda/notes, dismiss it, or indicate it is no longer relevant.
+What the nudge should contain
+Prompt: one concrete follow-up question or suggestion the manager can ask.
+Topic label: e.g., career growth, skill development, stretch opportunity, blocker, commitment.
+Why this is showing: brief reference to the prior discussion.
+Source context: snippet/date from the prior 1:1.
+Action affordance: add to agenda, copy, dismiss, snooze/skip for this meeting.
+Example
+Prompt: “Last time, Alex said they wanted more exposure to roadmap work. Check whether you’ve identified a concrete opportunity for them this month.”
+Why this is showing: “Growth topic discussed 2 weeks ago; no follow-up detected in later notes.”
+Source: “I’d like more chances to work on strategy, not just execution.”
+MVP scope
+Core MVP functionality
+Eligibility logic
+Trigger only for upcoming recurring 1:1s with at least one prior meeting artifact available.
+Only show when Pixie detects a likely unresolved growth topic with confidence above a defined threshold.
+Topic detection
+Identify candidate growth topics from prior 1:1 notes/transcripts/summaries.
+Focus on a constrained taxonomy:
+career aspirations
+skill development
+stretch assignments
+mentorship/coaching
+blockers to growth
+manager or employee commitments related to development
+Unresolved-state heuristic
+Mark topic unresolved if prior content indicates aspiration, concern, commitment, or next step and there is no clear evidence of closure/follow-up in subsequent meeting records.
+
+Nudge generation
+Generate one follow-up prompt in manager-ready language.
+Include a short explanation and source snippet.
+UI placement
+Display in the pre-1:1 prep surface for the manager-report meeting.
+Card appears above or near agenda/prep notes as a recommended follow-up.
+
+Manager actions
+Add to agenda/notes
+Copy prompt
+Dismiss
+“Not relevant” feedback
+
+Instrumentation
+Track impression, interaction, agenda insertion, dismissal, and downstream meeting usage signals.
+Explicitly out of scope for MVP
+More than one recommendation per meeting
+Nudges for non-growth topics like status updates, project follow-ups, or personal check-ins
+Automatic sending of nudges via email/Slack if the manager does not open Pixie
+Employee confirmation loops
+Persistent growth plans or dashboards
+Manager customization of nudge tone or category preferences
+Resolution tracking beyond simple inferred/dismissed states
+User experience notes
+Primary user flow
+Manager opens Pixie to prepare for an upcoming 1:1.
+Pixie shows a “Suggested follow-up” card if an eligible unresolved growth topic exists.
+Manager scans:
+prompt
+why it matters
+prior source snippet
+Manager chooses one action:
+Add to agenda → inserts as agenda item/note
+Copy → copies prompt for use elsewhere
+Dismiss → hides this nudge
+Not relevant → hides and records negative feedback
+Manager proceeds into the 1:1.
+After the meeting, Pixie can use notes/transcript to infer whether follow-up occurred.
+
+Empty/no-nudge flow
+Manager opens prep view.
+No high-confidence unresolved growth topic is found.
+No card shown, or a lightweight neutral state appears only if needed for layout consistency.
+We should avoid low-confidence filler that erodes trust.
+Dismissal flow
+Manager dismisses or marks “not relevant.”
+Nudge is suppressed for that meeting.
+If “not relevant,” use as training signal to reduce similar false positives.
+UX principles
+One card, one recommendation, one clear action.
+Trust over coverage: better to show nothing than a weak suggestion.
+Ground every recommendation in a prior conversation artifact.
+Keep prep-time overhead under 10 seconds to parse.
+Avoid language that sounds robotic, generic, or overly therapeutic.
+Edge cases
+No prior 1:1 data: do not show a nudge.
+Only one prior meeting with sparse notes: only show if confidence remains high.
+Topic already resolved in later notes: do not show.
+Multiple unresolved topics: choose the best one by recency × importance × actionability; do not show multiple.
+Poor or noisy transcript quality: fall back to summaries/notes if available; otherwise suppress.
+Long gap since prior discussion: optionally deprioritize stale topics unless explicitly recurring.
+Manager changed or employee changed teams: suppress if continuity is unreliable.
+Sensitive content misclassified as growth: suppress categories that may feel risky in MVP (e.g., compensation, performance risk, personal/health topics) unless explicitly framed as development and safe to surface.
+Manager already added similar agenda item manually: if detectable, suppress duplicate recommendation.
+One-off 1:1 or ad hoc meeting: do not trigger unless clearly part of recurring 1:1 workflow.
+
+Success metrics
+North star
+Repeat pre-1:1 engagement rate: % of managers who use Pixie prep in at least X recurring 1:1s over Y weeks.
+Primary MVP success metrics
+Nudge view rate: % of eligible upcoming 1:1s where a growth nudge is shown.
+Nudge action rate: % of shown nudges that receive a meaningful action:
+add to agenda
+copy
+expand source
+Agenda insertion rate: % of shown nudges added to agenda/notes.
+Pre-1:1 revisit lift: lift in manager prep opens for recurring 1:1s among exposed users vs control/baseline.
+Repeat usage lift: increase in managers with 2+ and 4+ prep sessions over a defined period.
+
+Quality guardrail metrics
+Dismiss / not relevant rate
+Negative feedback rate
+False-positive proxy rate: nudge shown but immediately dismissed within a few seconds
+Coverage rate: % of recurring 1:1s eligible for a high-confidence nudge
+Latency: time to load prep view with nudge generation
+Longer-term validation metrics
+Self-reported manager value: “Pixie helped me run a better 1:1”
+Self-reported continuity: “I remembered what to follow up on”
+Downstream retention lift among exposed managers
+Increase in follow-up language appearing in subsequent 1:1 notes
+Event instrumentation
+At minimum, instrument:
+prep_view_opened
+properties: manager_id, report_id, meeting_id, recurring_flag, scheduled_at
+growth_nudge_eligible
+properties: meeting_id, candidate_found, confidence_score, prior_meeting_count
+growth_nudge_shown
+properties: meeting_id, topic_category, confidence_score, source_age_days
+growth_nudge_expanded
+properties: meeting_id, topic_category
+growth_nudge_added_to_agenda
+properties: meeting_id, topic_category
+growth_nudge_copied
+properties: meeting_id, topic_category
+growth_nudge_dismissed
+properties: meeting_id, topic_category, dismiss_reason(optional)
+growth_nudge_marked_not_relevant
+properties: meeting_id, topic_category
+meeting_note_contains_nudge_topic
+properties: meeting_id, topic_category, inferred_followup=true/false
+manager_returned_for_next_prep
+properties: manager_id, days_since_last_prep
+Launch and iteration plan
+Phase 0: Offline validation
+Before shipping UI broadly:
+Run historical backtesting on prior 1:1 data.
+Measure:
+growth topic detection precision
+unresolved-topic precision
+quality of generated nudges via manual review
+Create a labeled evaluation set from sampled manager-report histories.
+Set confidence thresholds for “show” vs “suppress.”
+Exit criteria
+Strong enough precision that PM/design/eng are comfortable shipping a trust-sensitive recommendation
+Clear taxonomy and suppression rules for risky categories
+
+Phase 1: Internal dogfood
+Ship to internal users / friendly design partners only.
+Expose nudge card in prep experience
+Collect qualitative feedback on usefulness, tone, and trust
+Review dismissals and false positives weekly
+Success criteria
+Majority of shown nudges judged useful by reviewers
+Dismiss/not-relevant rate below predefined threshold
+No major trust or sensitivity incidents
+
+Phase 2: Limited beta
+Roll out to a small cohort of managers with recurring 1:1 volume.
+5–10% of eligible users or a curated beta group
+Compare prep engagement and repeat usage against baseline or control
+Continue manual QA sampling on shown nudges
+Success criteria
+Positive lift in pre-1:1 opens and repeat usage
+Acceptable quality guardrails
+Stable performance and low operational overhead
+
+Phase 3: Gradual rollout
+Expand to broader eligible population.
+Ramp by cohort
+Maintain kill switch
+Monitor by segment: manager tenure, team size, note quality, meeting frequency
+Early iteration priorities after MVP
+Better ranking of candidate unresolved topics
+Better explanation/rationale language
+Smarter suppression of stale or duplicate nudges
+Lightweight feedback loop to improve precision
+Potential delivery outside product surface (email/Slack) if in-app proves valuable
+Risks and open questions
+Risks
+Low precision erodes trust quickly. A few obviously wrong nudges may cause managers to ignore the feature entirely.
+Recommendations may feel generic. If phrasing is not specific and grounded, the feature will be perceived as AI filler.
+Coverage may be low. Many 1:1 records may not contain enough structured evidence to generate useful nudges.
+Sensitive-topic mishandling. Surfacing the wrong kind of prior topic could feel invasive or unsafe.
+Usage may not translate to retention. Managers may like the card without changing their ongoing product habit.
+Inference of “resolved” may be weak. We may over-show already addressed topics or miss good follow-ups.
+Prep surface discoverability may be insufficient. If users do not open prep consistently, value remains capped.
+Open questions
+What confidence threshold best balances usefulness and trust for MVP?
+Should “dismiss” and “not relevant” be separate actions in V1, or is one enough?
+Is “add to agenda” the strongest primary CTA, or should the default action be “use this question” / “copy”?
+What exact taxonomy of growth topics produces the best precision in early versions?
+How should we prioritize among multiple candidate topics—recency, explicit commitment, employee-stated aspiration, or manager-owned action?
+Do we need a visible explanation of why a topic is considered unresolved, or is source context enough?
+How reliably can we infer that follow-up happened in the next meeting from notes/transcripts alone?
+Should we suppress nudges for managers with very low prep adoption until we have an external trigger channel?
+What baseline/control setup will give us a credible read on retention impact in the beta window?
+If the MVP works, should the next expansion be more nudge categories, proactive delivery channels, or a lightweight continuity memory for all 1:1s?Packaging the PRD into a tight prototype brief for design now.# Prototype Brief: Growth Follow-up Nudges in Pre-1:1 Prep
+1) Prototype goal
+Create a clickable prototype that demonstrates how Pixie can improve 1:1 continuity by surfacing one high-confidence unresolved growth follow-up at the moment a manager prepares for an upcoming 1:1.
+The prototype should make reviewers feel:
+this is immediately useful in a real manager workflow
+the recommendation is grounded in prior conversation history
+the interaction is lightweight, trustworthy, and fast to act on
+Pixie is becoming part of a recurring prep habit, not a separate tool
+
+The prototype should validate Option 1: Growth Follow-up Nudges only.
+
+---
+2) Target demo audience
+Primary:
+Pixie product, design, and engineering stakeholders
+leadership reviewing retention and workflow-embed opportunities
+
+Secondary:
+internal users standing in for frontline or mid-level managers
+
+Assume the demo audience is evaluating:
+usefulness of the nudge
+clarity/trustworthiness of the recommendation
+whether the experience feels lightweight enough for repeat use
+whether the module belongs naturally in pre-1:1 prep
+
+---
+
+3) Screens to include
+Build as a small web prototype with a realistic Pixie-style prep experience. Keep scope tight.
+
+Screen 1: Pre-1:1 Prep view with suggested follow-up card
+Purpose:
+main demo screen
+shows the nudge in context of manager prep
+
+Layout:
+page header with upcoming 1:1 info
+lightweight prep structure beneath
+suggested follow-up card prominently placed near top of prep content
+Content blocks:
+Header
+Title: Prepare for your 1:1
+Employee name: Jordan Lee
+Role/team: Product Designer • Growth
+Meeting time: Tomorrow at 10:00 AM
+Optional subtext: 30 min recurring 1:1
+Suggested follow-up module
+Section label: Suggested follow-up
+Card content:
+topic pill: Growth
+main prompt:
+Last time, Jordan said they want more exposure to roadmap thinking. Check what progress they’ve made and whether they still want a chance to lead part of next sprint planning.
+why this is showing:
+Why this is showing: In your last 1:1, Jordan shared a development goal and you agreed on a concrete next step that hasn’t been revisited.
+source snippet block:
+snippet quote:
+"I’d like more exposure to roadmap decisions, not just execution."
+metadata:
+From 1:1 notes • Apr 12
+action row:
+primary button: Add to agenda
+secondary text button: Copy prompt
+tertiary text button: Dismiss
+link-style negative feedback: Not relevant
+
+Agenda / prep area
+Section title: Agenda
+existing items:
+Sprint design handoff
+Q2 goals check-in
+allow added item to appear here after interaction
+
+Optional notes area
+Title: Private prep notes
+can stay mostly static, just to make the page feel real
+
+Behavior:
+this screen should support the happy path and alternate actions
+
+---
+Screen 2: Added-to-agenda state
+Purpose:
+show the most important successful outcome after clicking Add to agenda
+
+Changes from screen 1:
+follow-up card remains visible but shows success confirmation
+agenda list updates with a new item at top or inserted contextually
+Specific behavior:
+after clicking Add to agenda:
+button changes to disabled success state: Added
+inline confirmation appears: Added to agenda
+agenda gains a new item:
+Follow up on roadmap exposure and sprint planning ownership
+optional subtle highlight on new agenda item for 1–2 seconds
+
+Keep the card visible so the reviewer understands what was added.
+
+---
+Screen 3: Copy prompt state
+Purpose:
+demonstrate lightweight use without committing to agenda changes
+
+Changes:
+on clicking Copy prompt, show a lightweight toast:
+Prompt copied
+no other page changes required
+
+Optional:
+change button label briefly to Copied
+
+---
+
+Screen 4: Dismissed state
+Purpose:
+show low-friction removal of the card
+Behavior:
+clicking Dismiss removes the card from the prep view
+replaced by a small collapsed acknowledgment row:
+Suggestion dismissed
+optional undo link: Undo
+
+This should feel lightweight, not punitive.
+
+---
+
+Screen 5: Not relevant feedback state
+Purpose:
+show how a low-trust recommendation can be rejected distinctly from dismiss
+
+Behavior:
+clicking Not relevant opens a small lightweight feedback popover or inline sheet
+Content:
+title: Why wasn’t this relevant?
+options:
+Already addressed
+Not a growth topic
+Too sensitive
+Not useful
+buttons:
+Submit
+Cancel
+
+After submit:
+card disappears
+small confirmation row appears:
+Thanks — we’ll use this to improve suggestions.
+
+Do not over-design this; keep it simple and fast.
+
+---
+
+Screen 6: No suggestion state
+Purpose:
+show MVP behavior when no high-confidence unresolved growth topic exists
+Layout:
+same prep page shell as screen 1
+no suggested follow-up card
+
+Instead show either:
+nothing at all in that area, or
+a subtle placeholder:
+section label: Suggested follow-up
+body text: No follow-up suggestion for this meeting.
+
+Preferred for demo clarity: use the subtle placeholder so reviewers understand absence is intentional.
+
+Supporting text:
+Pixie only suggests a follow-up when there’s a strong signal from prior 1:1s.
+
+---
+
+4) Interaction design
+Core interaction model
+The prototype should feel like a real prep workflow, not a concept gallery.
+
+Entry point
+User lands directly on the pre-1:1 prep page for Jordan Lee.
+
+Primary interaction
+User sees one card, scans it quickly, and clicks Add to agenda.
+UX details
+recommendation card should be visible above the fold on desktop
+reading time should feel under 10 seconds
+hierarchy should be:
+main prompt
+topic pill
+why this is showing
+source snippet
+actions
+tone should feel natural and managerial, not AI-heavy
+avoid labels like “AI insight” or “generated recommendation”
+use grounded phrasing like Suggested follow-up
+Visual guidance
+one card only
+soft container with clear separation from rest of prep page
+source snippet styled as evidence, not as long transcript
+actions should clearly distinguish:
+commit action: Add to agenda
+utility action: Copy prompt
+lightweight removal: Dismiss
+corrective feedback: Not relevant
+Feedback patterns
+Add to agenda → inline confirmation + agenda update
+Copy prompt → toast
+Dismiss → remove card + optional undo
+Not relevant → short feedback capture + confirmation
+
+---
+
+5) Sample data/content
+Use the following exact sample content unless needed for layout fit.
+Meeting context
+Manager: implied, no need to show prominently
+Report: Jordan Lee
+Role: Product Designer
+Team: Growth
+Meeting time: Tomorrow at 10:00 AM
+Cadence: Recurring 1:1 • 30 min
+
+Suggested follow-up card content
+Topic label: Growth
+
+Main prompt:Last time, Jordan said they want more exposure to roadmap thinking. Check what progress they’ve made and whether they still want a chance to lead part of next sprint planning.
+Why this is showing:In your last 1:1, Jordan shared a development goal and you agreed on a concrete next step that hasn’t been revisited.
+
+Source snippet:"I’d like more exposure to roadmap decisions, not just execution."
+
+Source metadata:From 1:1 notes • Apr 12
+
+Agenda starter items
+Sprint design handoff
+Q2 goals check-in
+
+Added agenda item
+Follow up on roadmap exposure and sprint planning ownership
+Not relevant feedback options
+Already addressed
+Not a growth topic
+Too sensitive
+Not useful
+
+No suggestion state copy
+Heading/label: Suggested follow-up
+Body:No follow-up suggestion for this meeting.
+Supporting text:Pixie only suggests a follow-up when there’s a strong signal from prior 1:1s.
+
+---
+
+6) States to prototype
+Include these states explicitly and make them navigable from the prototype, either through real interactions or a small demo-state switcher.
+
+Required states
+Default / recommendation shown
+one unresolved growth follow-up card appears
+
+Add to agenda success
+agenda updated
+confirmation visible
+
+Copy prompt success
+toast or temporary copied state
+
+Dismissed
+card removed
+subtle dismissed message with optional undo
+Not relevant submitted
+mini feedback flow completed
+card removed
+thank-you confirmation
+
+No suggestion
+prep page shown without card because no high-confidence topic exists
+
+Optional but helpful state
+Feedback popover open
+before submit, with reason choices visible
+Do not prototype low-confidence, transcript noise, sensitive suppression, duplicate suppression, or resolved-topic logic as separate system flows; represent them only through the no-suggestion or not-relevant states.
+
+---
+
+7) Recommended happy path and alternate paths
+Happy path
+Manager opens Prepare for your 1:1
+Sees Suggested follow-up card for Jordan
+Scans prompt, why, and source snippet
+Clicks Add to agenda
+New agenda item appears: Follow up on roadmap exposure and sprint planning ownership
+Manager continues prep with stronger continuity from prior 1:1
+
+Why this path matters:
+demonstrates the core product thesis
+shows the recommendation is actionable, grounded, and seamlessly integrated
+Alternate path 1: Copy without adding
+Manager opens prep
+Reads card
+Clicks Copy prompt
+Sees Prompt copied toast
+Continues prep using the prompt elsewhere
+
+Why include:
+shows lightweight utility for managers who do not want Pixie editing agenda structure
+
+Alternate path 2: Reject as not relevant
+Manager opens prep
+Reads card
+Clicks Not relevant
+Selects reason: Already addressed
+Submits feedback
+Card disappears and thank-you confirmation appears
+Why include:
+demonstrates trust-preserving escape hatch
+shows Pixie can be corrected when wrong
+
+---
+
+8) Success criteria for the prototype review
+The prototype review is successful if stakeholders agree that:
+
+The value proposition is instantly understandable
+reviewers can explain the feature in one sentence:
+Pixie surfaces one unresolved growth follow-up before a 1:1 so managers can continue the conversation.
+The recommendation feels trustworthy
+it is clearly grounded in prior notes
+the why/source treatment feels sufficient without overloading the manager
+
+The interaction feels lightweight
+reviewers believe a manager could process and act on it in under 10 seconds
+
+The feature feels embedded in workflow
+it feels native to prep, not like a separate assistant panel
+The system is appropriately narrow
+one recommendation feels better than many
+trust and relevance feel prioritized over coverage
+
+Failure handling feels acceptable
+dismiss and not relevant actions are enough for MVP review
+no-suggestion state feels intentional, not broken
+Useful questions for review:
+Would you expect to use this before recurring 1:1s?
+Do you trust why this suggestion is being shown?
+Is Add to agenda the right primary action?
+Does showing only one suggestion feel right?
+Is the distinction between Dismiss and Not relevant clear enough?
+
+---
+
+9) Notes for Vercel implementation
+Build approach
+Create a lightweight clickable prototype in Next.js or a simple React app deployed on Vercel.
+Recommended:
+single-page app with local component state
+no backend required
+no auth required
+no persistence required
+no real AI or transcript processing
+
+Implementation structure
+Suggested components:
+PrepPageShell
+MeetingHeader
+SuggestedFollowUpCard
+SourceSnippet
+AgendaList
+Toast
+FeedbackPopover
+DemoStateSwitcher (optional but useful for review)
+State management
+Use simple local state for:
+cardVisible
+agendaItems
+isAdded
+copiedToastVisible
+feedbackOpen
+feedbackSubmitted
+selectedFeedbackReason
+demoScenario (default, added, dismissed, feedback, none)
+Prototype requirements
+desktop-first layout is sufficient
+responsive enough to not break on laptop width
+interactions should be fast and obvious
+use mock data constants in code
+use subtle animation only for:
+toast in/out
+card removal
+agenda item highlight
+no loading states needed unless added for polish
+
+Demo controls
+Include a small non-intrusive prototype control to reset or switch scenarios:
+Default
+Added
+Dismissed
+Not relevant
+No suggestion
+Place this in a corner or collapsible panel so it does not distract from the main UI.
+
+Content fidelity
+Keep copy close to the PRD:
+growth-focused
+one concrete unresolved follow-up
+grounded source evidence
+no generic AI phrasing
+no multiple recommendations
+What not to build
+agenda generation
+employee-facing views
+multiple cards
+confidence scores in UI
+transcript browsing
+full 1:1 history view
+settings/preferences
+analytics instrumentation beyond basic console events if helpful for demo
+Final prototype outcome
+The deployed Vercel prototype should let a reviewer:
+experience the default pre-1:1 prep screen
+click through the primary and alternate actions
+understand the no-suggestion state
+leave with a clear sense of how Pixie can create continuity across recurring 1:1sReview-ready summary for option 1:
+Recommendation
+Build Growth Follow-up Nudges: a pre-1:1 module that surfaces one concrete unresolved growth follow-up from prior 1:1s, right when a manager is preparing for the next meeting.
+Why this is the right bet
+Tightest path to retention: attaches Pixie to an existing recurring workflow.
+Low behavior change: manager just opens prep and gets one actionable prompt.
+High perceived value: improves continuity, which is a visible pain in 1:1s.
+Constrained MVP: one card, one suggestion, one action.
+PRD snapshot
+Title: Growth Follow-up Nudges
+Thesis: Pixie should turn every upcoming 1:1 into a higher-value continuation of the last one by surfacing one concrete, unresolved growth follow-up at prep time.
+
+MVP
+Show a Suggested follow-up card in the pre-1:1 prep view when Pixie detects a high-confidence unresolved growth topic.
+Card contents
+prompt
+topic label
+why this is showing
+source snippet + date
+actions: Add to agenda, Copy prompt, Dismiss, Not relevant
+
+In scope
+recurring 1:1s only
+growth-topic taxonomy only
+one recommendation per meeting
+confidence-gated display
+manager feedback capture
+instrumentation across impression → action → repeat prep behavior
+Out of scope
+full growth plans
+multi-topic memory
+employee-facing nudges
+cross-team prioritization
+auto-generated full agendas
+
+Success metrics
+lift in repeat pre-1:1 prep usage
+nudge action rate
+agenda insertion rate
+dismissal / not relevant rate as trust guardrails
+downstream return for next prep session
+
+Main risks
+weak precision erodes trust
+suggestions feel generic
+low coverage due to sparse/noisy notes
+sensitive-topic mishandling
+Prototype handoff completed
+I translated the PRD into a clickable prototype brief for design/frontend.
+
+Prototype should include
+Default prep screen with suggested follow-up card
+Add to agenda success state
+Copy prompt state
+Dismissed state
+Not relevant feedback flow
+No suggestion state
+
+Recommended happy path
+Manager opens prep → sees suggested follow-up → clicks Add to agenda → new agenda item appears.
+Alternate paths
+Copy prompt without adding to agenda
+Not relevant with quick feedback reason
+
+Vercel build notes
+simple Next.js/React prototype
+single-page flow
+local state only
+no backend/auth needed
+optional demo-state switcher for review
+Suggested next squad steps
+PM/Design review the prototype flow and CTA hierarchy
+Eng assess feasibility of unresolved-topic detection + suppression rules
+Run offline eval on historical 1:1 data before beta
+Dogfood with internal/friendly managers
+Ship limited beta with strong quality guardrails
+
+If you want, I can next turn this into:
+a one-page exec brief
+an engineering-ready spec
+or a prototype review checklist

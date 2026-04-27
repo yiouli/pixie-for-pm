@@ -5,12 +5,46 @@ import re
 from dataclasses import dataclass
 
 RETENTION_NEXT_STEP_DEMO_WORKFLOW = "retention_next_step_demo"
-_DEEP_DIVE_PATTERN = re.compile(r"\bgo\s+deeper\s+on\s+#?(\d+)\b", re.IGNORECASE)
+_DEEP_DIVE_PATTERN = re.compile(
+    r"\bgo\s+deeper\s+on\s+(?:option\s*)?#?(\d+)\b",
+    re.IGNORECASE,
+)
+
+# Bare option pick like "2", "#2", "option 2", "the second one".
+_BARE_NUMBER_PATTERN = re.compile(r"^\s*(?:option\s*)?#?\s*([1-9])\b\s*\.?\s*$")
+_ORDINAL_OPTIONS = {
+    "first": 1,
+    "second": 2,
+    "third": 3,
+    "1st": 1,
+    "2nd": 2,
+    "3rd": 3,
+    "one": 1,
+    "two": 2,
+    "three": 3,
+}
+_OPTION_PROMPT_MARKERS = (
+    "which option should i deepen",
+    "which option do you want me to deepen",
+    "which option should we deepen",
+)
+_PROTOTYPE_PROMPT_MARKERS = (
+    "want me to spin up a quick clickable prototype",
+    "want me to spin up a prototype",
+    "want me to build a prototype",
+    "shall i spin up a prototype",
+    "should i spin up a prototype",
+)
+_APPROVAL_PATTERN = re.compile(
+    r"\b(sure|yes|yep|yeah|yup|ok|okay|please|do it|go ahead|let'?s go|sounds good)\b",
+    re.IGNORECASE,
+)
 
 RESEARCH_BRIEF_STAGE = "research_brief"
 RESEARCH_FINDINGS_STAGE = "research_findings"
 PROTOTYPE_BRIEF_STAGE = "prototype_brief"
 PROTOTYPE_SUMMARY_STAGE = "prototype_summary"
+AWAITING_PROTOTYPE_APPROVAL_STAGE = "awaiting_prototype_approval"
 
 READY_STATUS = "ready"
 BLOCKED_STATUS = "blocked"
@@ -46,6 +80,59 @@ def parse_deep_dive_option(message: str) -> int | None:
     if match is None:
         return None
     return int(match.group(1))
+
+
+def parse_bare_option_choice(
+    message: str,
+    *,
+    recent_pm_reply: str | None,
+) -> int | None:
+    """Match a bare option pick like "2", "#2", "option 2", "the second one".
+
+    Only fires when the most recent PM reply asked the user which option to deepen.
+    This avoids hijacking unrelated numeric replies.
+    """
+    if recent_pm_reply is None:
+        return None
+    if not _contains_any(recent_pm_reply.casefold(), _OPTION_PROMPT_MARKERS):
+        return None
+
+    text = message.strip().casefold()
+    if text == "":
+        return None
+
+    bare = _BARE_NUMBER_PATTERN.match(text)
+    if bare is not None:
+        choice = int(bare.group(1))
+        return choice if 1 <= choice <= 9 else None
+
+    # Match "the second one", "second option", "option two", etc.
+    for token, value in _ORDINAL_OPTIONS.items():
+        if re.search(rf"\b{re.escape(token)}\b", text):
+            return value
+    return None
+
+
+def parse_prototype_approval(
+    message: str,
+    *,
+    recent_pm_reply: str | None,
+) -> bool:
+    """Match short approvals after the PM asks about spinning up a prototype."""
+    if recent_pm_reply is None:
+        return False
+    if not _contains_any(recent_pm_reply.casefold(), _PROTOTYPE_PROMPT_MARKERS):
+        return False
+    text = message.strip()
+    if text == "":
+        return False
+    if "no" in text.casefold().split():
+        return False
+    return _APPROVAL_PATTERN.search(text) is not None
+
+
+def _contains_any(haystack: str, needles: tuple[str, ...]) -> bool:
+    return any(needle in haystack for needle in needles)
 
 
 def serialize_demo_handoff(
@@ -103,6 +190,7 @@ def _normalize(message: str) -> str:
 
 
 __all__ = [
+    "AWAITING_PROTOTYPE_APPROVAL_STAGE",
     "BLOCKED_STATUS",
     "DemoHandoffPayload",
     "PROTOTYPE_BRIEF_STAGE",
@@ -112,7 +200,9 @@ __all__ = [
     "RESEARCH_FINDINGS_STAGE",
     "RETENTION_NEXT_STEP_DEMO_WORKFLOW",
     "is_retention_next_step_demo",
+    "parse_bare_option_choice",
     "parse_deep_dive_option",
     "parse_demo_handoff",
+    "parse_prototype_approval",
     "serialize_demo_handoff",
 ]

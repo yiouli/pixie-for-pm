@@ -3,10 +3,12 @@ from __future__ import annotations
 import logging
 from collections.abc import Mapping
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Literal, Protocol
+from typing import TYPE_CHECKING, Any, Literal, Protocol
 
+import pixie
 from langchain_core.messages import ToolMessage
 from langchain_core.tools import BaseTool, StructuredTool
+from pixie.instrumentation.wrap import get_eval_input
 from pydantic import BaseModel
 
 from pixie_for_pm.config.settings import AppSettings
@@ -101,6 +103,12 @@ class IntegrationToolsetInitializer:
         self._store = store
         self._cipher = cipher
         self._providers = dict(providers)
+        self._tool_call_counts: dict[str, int] = {}
+
+    def _next_tool_call_index(self, tool_name: str) -> int:
+        index = self._tool_call_counts.get(tool_name, 0) + 1
+        self._tool_call_counts[tool_name] = index
+        return index
 
     async def initialize(
         self,
@@ -214,8 +222,64 @@ class IntegrationToolsetInitializer:
                 status_emitter,
                 f"Fetching data from {provider_name}...",
             )
+            call_index = self._next_tool_call_index(tool.name)
+            wrap_name = f"tool_call__{tool.name}__{call_index}"
+            args_wrap_name = f"tool_args__{tool.name}__{call_index}"
+            pixie.wrap(
+                {"tool": tool.name, "args": _jsonable(kwargs)},
+                purpose="state",
+                name=args_wrap_name,
+                description=(
+                    f"Args passed to {tool.name} (call #{call_index}) so evaluators "
+                    "can inspect what content was sent to the integration."
+                ),
+            )
             try:
-                if response_format == "content_and_artifact":
+                if get_eval_input() is not None:
+                    # Eval mode: skip the real network call, return registry value.
+                    # If the agent invents a tool call we didn't capture in the
+                    # reference trace, return a synthetic tool error so the LLM
+                    # can recover and the run still produces a scorable transcript.
+                    sentinel: object = object()
+
+                    def _placeholder() -> object:
+                        return sentinel
+
+                    try:
+                        injected = pixie.wrap(
+                            _placeholder,
+                            purpose="input",
+                            name=wrap_name,
+                            description=(
+                                f"Result of {tool.name} (call #{call_index}) replayed "
+                                "from the eval registry."
+                            ),
+                        )()
+                    except Exception as miss_exc:
+                        message = (
+                            f"[eval-stub] {tool.name} call #{call_index} not in "
+                            f"reference trace ({type(miss_exc).__name__}). "
+                            "Treat as a transient tool failure and continue."
+                        )
+                        if response_format == "content_and_artifact":
+                            wrapped_result: object = (message, None)
+                        else:
+                            wrapped_result = message
+                    else:
+                        if injected is sentinel:
+                            raise RuntimeError(
+                                f"Eval registry did not provide a value for {wrap_name}."
+                            )
+                        if response_format == "content_and_artifact":
+                            if isinstance(injected, list) and len(injected) == 2:
+                                wrapped_result = (injected[0], injected[1])
+                            elif isinstance(injected, tuple) and len(injected) == 2:
+                                wrapped_result = injected
+                            else:
+                                wrapped_result = (injected, None)
+                        else:
+                            wrapped_result = injected
+                elif response_format == "content_and_artifact":
                     result = await tool.ainvoke(
                         {
                             "type": "tool_call",
@@ -225,13 +289,31 @@ class IntegrationToolsetInitializer:
                         }
                     )
                     if isinstance(result, ToolMessage):
-                        wrapped_result: object = (result.content, result.artifact)
+                        wrapped_result = (result.content, result.artifact)
                     elif isinstance(result, tuple):
                         wrapped_result = result
                     else:
                         wrapped_result = (result, None)
+                    pixie.wrap(
+                        _jsonable(wrapped_result),
+                        purpose="input",
+                        name=wrap_name,
+                        description=(
+                            f"Captured result of {tool.name} (call #{call_index}) "
+                            "from the live integration."
+                        ),
+                    )
                 else:
                     wrapped_result = await tool.ainvoke(kwargs)
+                    pixie.wrap(
+                        _jsonable(wrapped_result),
+                        purpose="input",
+                        name=wrap_name,
+                        description=(
+                            f"Captured result of {tool.name} (call #{call_index}) "
+                            "from the live integration."
+                        ),
+                    )
             except Exception:
                 logger.exception(
                     "Tool invocation failed provider=%s tool=%s discord_server_id=%s "
@@ -270,6 +352,22 @@ def _tool_args_schema(tool: BaseTool) -> type[BaseModel] | dict[str, object]:
     if tool.args_schema is None:
         return {"type": "object", "properties": {}}
     return tool.args_schema
+
+
+def _jsonable(value: Any) -> Any:
+    """Best-effort coercion of tool I/O into JSON-serialisable shapes for wrap()."""
+    if isinstance(value, (str, int, float, bool)) or value is None:
+        return value
+    if isinstance(value, Mapping):
+        return {str(k): _jsonable(v) for k, v in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_jsonable(item) for item in value]
+    if isinstance(value, ToolMessage):
+        return {
+            "content": _jsonable(value.content),
+            "artifact": _jsonable(value.artifact),
+        }
+    return str(value)
 
 
 def build_toolset_initializer(

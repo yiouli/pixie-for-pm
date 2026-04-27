@@ -1,9 +1,12 @@
 from __future__ import annotations
 
+import re
 from collections.abc import Awaitable, Callable
 from dataclasses import replace
 
+import pixie
 from langchain_core.language_models.chat_models import BaseChatModel
+from langchain_core.tools import BaseTool
 
 from pixie_for_pm.agents.deep_agent import DEFAULT_DEEP_AGENT_MODEL, run_deep_agent
 from pixie_for_pm.agents.demo_flow import (
@@ -40,6 +43,8 @@ When a PM hands you a PRD, turn it into:
 - the interaction model for the retention loop
 - a concise summary of the clickable prototype outcome
 """.strip()
+
+_URL_PATTERN = re.compile(r"https?://\S+")
 
 
 def build_product_designer_handler(
@@ -86,6 +91,17 @@ async def _handle_demo_prototype_brief(
     openai_api_key: str | None,
 ) -> AgentExecution:
     if _find_vercel_integration(context) is None:
+        blocked_artifact = pixie.wrap(
+            (
+                "I translated the PRD into a prototype plan, but Vercel is not "
+                "connected for this server, so I could not publish the clickable "
+                "prototype. Connect Vercel and rerun the deep dive to complete the "
+                "demo flow."
+            ),
+            purpose="state",
+            name="prototype_artifact",
+            description="Prototype summary or blocker returned from the designer to the PM.",
+        )
         return AgentExecution(
             messages=[],
             handoffs=[
@@ -95,12 +111,7 @@ async def _handle_demo_prototype_brief(
                     reason=serialize_demo_handoff(
                         stage=PROTOTYPE_SUMMARY_STAGE,
                         status=BLOCKED_STATUS,
-                        artifact=(
-                            "I translated the PRD into a prototype plan, but Vercel is "
-                            "not connected for this server, so I could not publish the "
-                            "clickable prototype. Connect Vercel and rerun the deep dive "
-                            "to complete the demo flow."
-                        ),
+                        artifact=blocked_artifact,
                     ),
                 )
             ],
@@ -117,6 +128,17 @@ async def _handle_demo_prototype_brief(
             current_context,
             brief=brief,
         ),
+    )
+    deployment_result = await _publish_demo_prototype(context, summary=summary)
+    artifact = _build_prototype_artifact(
+        summary=summary,
+        deployment_result=deployment_result,
+    )
+    summary = pixie.wrap(
+        artifact,
+        purpose="state",
+        name="prototype_artifact",
+        description="Prototype summary returned from the designer to the PM.",
     )
     return AgentExecution(
         messages=[],
@@ -161,11 +183,104 @@ def _build_demo_execution_context(context: WorkflowContext, *, brief: str) -> st
             "PM handoff PRD:",
             brief,
             (
-                "Create or update a clickable Vercel prototype when possible and "
-                "summarize the resulting interaction flow for the PM."
+                "Return only the internal prototype plan for the PM. Do not claim the "
+                "prototype was published; the runtime will handle the Vercel deployment."
+            ),
+            (
+                "Use this exact structure: `Prototype summary: <one sentence>` on the "
+                "first line, then sections for Core user journey, Critical screens and "
+                "states, Interaction model, and Open questions."
             ),
         )
     )
+
+
+async def _publish_demo_prototype(
+    context: WorkflowContext, *, summary: str
+) -> str | None:
+    project_listing = await _invoke_text_tool(
+        context,
+        "vercel_list_projects",
+        {"team_name": None},
+    )
+    project_name = _pick_project_name(project_listing)
+    return await _invoke_text_tool(
+        context,
+        "vercel_create_deployment",
+        {
+            "project_name": project_name,
+            "deployment_summary": _deployment_summary(summary),
+        },
+    )
+
+
+def _build_prototype_artifact(*, summary: str, deployment_result: str | None) -> str:
+    lines = []
+    if deployment_result is not None:
+        lines.append(f"Deployment result: {deployment_result}")
+    lines.append(summary.strip())
+    return "\n\n".join(line for line in lines if line)
+
+
+def _deployment_summary(summary: str) -> str:
+    prototype_summary = _extract_prefixed_line(summary, "Prototype summary:")
+    if prototype_summary is not None:
+        return prototype_summary
+    return _truncate_words(_clean_text(summary), 24)
+
+
+def _pick_project_name(project_listing: str | None) -> str:
+    if project_listing is None:
+        return "pixie-retention-demo"
+
+    for raw_line in project_listing.splitlines():
+        line = raw_line.strip().lstrip("-* ").strip()
+        if line != "":
+            return line.split()[0]
+    return "pixie-retention-demo"
+
+
+def _extract_prefixed_line(text: str, prefix: str) -> str | None:
+    for raw_line in text.splitlines():
+        line = raw_line.strip().lstrip("-* ").strip()
+        if line.lower().startswith(prefix.lower()):
+            return line[len(prefix) :].strip()
+    return None
+
+
+def _clean_text(text: str) -> str:
+    cleaned = re.sub(r"[*_`#]", "", text)
+    cleaned = _URL_PATTERN.sub("", cleaned)
+    return re.sub(r"\s+", " ", cleaned).strip()
+
+
+def _truncate_words(text: str, limit: int) -> str:
+    words = text.split()
+    if len(words) <= limit:
+        return " ".join(words)
+    return " ".join(words[:limit]).rstrip(".,;:") + "..."
+
+
+def _find_tool(context: WorkflowContext, tool_name: str) -> BaseTool | None:
+    for tool in context.toolset.tools:
+        if tool.name == tool_name:
+            return tool
+    return None
+
+
+async def _invoke_text_tool(
+    context: WorkflowContext,
+    tool_name: str,
+    payload: dict[str, object],
+) -> str | None:
+    tool = _find_tool(context, tool_name)
+    if tool is None:
+        return None
+
+    result = await tool.ainvoke(payload)
+    if isinstance(result, tuple):
+        return str(result[0])
+    return str(result)
 
 
 def _find_vercel_integration(context: WorkflowContext) -> ConnectedIntegration | None:

@@ -170,6 +170,70 @@ async def test_hosted_mcp_provider_refreshes_unauthorized_tokens_and_retries() -
 
 
 @pytest.mark.asyncio
+async def test_hosted_mcp_provider_refreshes_wrapped_unauthorized_tokens() -> None:
+    calls: list[dict[str, object]] = []
+
+    async def _loader(
+        session: object | None,
+        **kwargs: object,
+    ) -> list[StructuredTool]:
+        del session
+        calls.append(kwargs)
+        if len(calls) == 1:
+            request = httpx.Request("POST", "https://mcp.notion.com/mcp")
+            response = httpx.Response(401, request=request)
+            unauthorized = httpx.HTTPStatusError(
+                "401 Unauthorized",
+                request=request,
+                response=response,
+            )
+            raise ExceptionGroup("mcp request failed", [unauthorized])
+        return [
+            StructuredTool.from_function(
+                coroutine=lambda **_: pytest.fail("tool should not be invoked"),
+                name="search",
+                description="Remote tool",
+            )
+        ]
+
+    async def _refresh(
+        credentials: Mapping[str, str],
+    ) -> tuple[dict[str, str], list[str] | None]:
+        assert credentials["refresh_token"] == "notion-refresh-token"
+        return ({"access_token": "refreshed-notion-token"}, ["read"])
+
+    provider = HostedMcpToolProvider(
+        provider_id="notion",
+        server_url="https://mcp.notion.com/mcp",
+        token_field="access_token",
+        tool_loader=_loader,
+        token_refresher=_refresh,
+    )
+    credentials = {
+        "access_token": "expired-notion-token",
+        "refresh_token": "notion-refresh-token",
+        "oauth_client_id": "registered-client-id",
+        "oauth_resource": "https://mcp.notion.com",
+    }
+
+    tools = await provider.load_tools(credentials=credentials, trigger=_trigger())
+
+    assert [tool.name for tool in tools] == ["search"]
+    assert [call["connection"] for call in calls] == [
+        {
+            "transport": "streamable_http",
+            "url": "https://mcp.notion.com/mcp",
+            "headers": {"Authorization": "Bearer expired-notion-token"},
+        },
+        {
+            "transport": "streamable_http",
+            "url": "https://mcp.notion.com/mcp",
+            "headers": {"Authorization": "Bearer refreshed-notion-token"},
+        },
+    ]
+
+
+@pytest.mark.asyncio
 async def test_hosted_mcp_provider_requires_reconnect_for_legacy_unauthorized_tokens() -> (
     None
 ):

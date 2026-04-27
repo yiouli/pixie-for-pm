@@ -1,0 +1,812 @@
+BlueSoul — 1:25 AM
+@Pixie   it seems that the career growth feature retention is low, what should we build next to improve that?
+Pixie
+APP
+ — 1:27 AM
+Growth follow-up nudges in 1:1 prep - Idea: detect open career-growth threads from prior notes and surface a specific follow-up prompt before the next 1:1. Why: retention is low because career growth is too infrequent as a standalone workflow, but 1:1 prep already recurs and makes the value immediate. Proposal: in the 1:1 prep flow, show one “pick up where you left off” card for a report with the prior commitment, supporting note evidence, and one suggested follow-up question.
+Per-report career conversation brief - Idea: generate a lightweight brief for a single report that summarizes growth themes, prior commitments, evidence, and the next recommended question. Why: users return for concrete meeting-ready artifacts, not abstract planning surfaces, so this creates immediate utility with minimal setup. Proposal: add a “Career brief” module on each report that auto-compiles recent notes into a short prep artifact managers can use directly in a conversation.
+Evidence-linked growth framework - Idea: provide a simple growth rubric tied to the report’s real notes, showing both existing evidence and missing signals. Why: users do want structure, especially newer managers, but they reject generic guidance; grounding the framework in real documentation reduces anxiety and increases trust. Proposal: for each report, show 3–5 growth dimensions with note-linked evidence, confidence levels, and prompts for what to observe or discuss next.
+Which option should we deepen next?
+BlueSoul — 1:29 AM
+2
+Pixie
+APP
+ — 1:30 AM
+Drafting the PRD for option #2, then I’ll hand it to a design subagent for a clickable prototype concept.## 1) Prototype thesis
+
+Prototype concept:
+A meeting-ready “Career brief” side panel/module on each direct report page that turns existing people signals into a draft coaching brief in under 2 minutes.
+
+Design thesis:
+The prototype should prove that managers will trust and use a brief when it is:
+Compact first: instantly scannable in one viewport
+Grounded: every recommendation links to visible evidence
+Action-oriented: gives managers a concrete conversation plan, not just insights
+Editable: feels like a draft the manager can quickly personalize
+Low-friction: copy, tweak, and use immediately before a 1:1
+Clickable prototype objective:
+Simulate the path from report profile → generate/view brief → inspect evidence → edit prep note → copy for meeting use.
+
+---
+
+2) User flow
+Primary happy path
+Manager opens a direct report profile
+Sees a Career brief module with a draft CTA or auto-generated summary
+Clicks Generate brief / View brief
+Reviews the compact brief summary
+Expands evidence citations to verify why suggestions appeared
+Scans conversation plan and suggested support
+Edits the prep note
+Clicks Copy brief
+Leaves with a usable artifact for the upcoming conversation
+Secondary paths to simulate
+Regenerate brief if content feels too generic
+Thumbs up/down feedback after scanning
+Sparse data state when evidence threshold is low
+Inline edit state for personalized manager note
+
+---
+
+3) 4–6 screens with purpose and key UI elements
+Screen 1 — Report Profile with Career Brief collapsed
+Purpose: Introduce the feature in context of the report page.
+Key UI elements:
+Report header
+Name, role, tenure, next 1:1 time
+Existing profile summary blocks
+Recent themes
+1:1 notes
+Feedback highlights
+New Career brief card/module
+Label: “Draft”
+Freshness indicator: “Based on last 60 days”
+Short teaser sentence
+CTA: Generate brief
+Secondary link: “How this is built”
+Optional trust hint:
+“Uses existing notes, feedback, and themes only”
+Why this screen matters:
+Shows the feature as a natural extension of current workflow, not a separate tool.
+
+---
+
+Screen 2 — Career Brief loaded, compact default view
+Purpose: Deliver the skimmable artifact.
+Key UI elements:
+Module header
+“Career brief”
+Draft badge
+Freshness chip
+Actions: Copy, Edit prep note, Regenerate
+Section 1: Growth snapshot
+Likely aspiration
+Strength to lean into
+Development area
+Section 2: Evidence highlights
+3 short bullets with inline citation pills
+Section 3: Conversation plan
+3 talking points
+2 open-ended questions
+Section 4: Suggested support
+2–3 manager actions
+Section 5: Prep note
+2–3 lines editable text area
+Footer feedback
+👍 Helpful / 👎 Not helpful
+
+Why this screen matters:
+This is the core value moment: fast understanding + ready-to-use guidance.
+
+---
+
+Screen 3 — Evidence drill-down / citation drawer
+Purpose: Build trust through grounding.
+Key UI elements:
+Right-side drawer or accordion expansion
+Evidence item list:
+Source type icon: note, feedback, prior theme
+Source title/date
+Highlighted excerpt
+Link back to source context
+Top helper text:
+“Why you’re seeing this”
+Citation mapping:
+“Supports: development area”
+“Supports: suggested stretch assignment”
+
+Why this screen matters:
+Trust is central to adoption. The prototype must make “why am I seeing this?” obvious.
+
+---
+Screen 4 — Edit mode for Prep Note + lightweight customization
+Purpose: Show that the brief is editable and manager-owned.
+
+Key UI elements:
+Inline editable Prep note textarea
+Optional editable talking point row
+Buttons:
+Save changes
+Cancel
+Light helper text:
+“Your edits stay on this brief”
+Micro interaction:
+“Saved” toast
+
+Why this screen matters:
+Managers want support that is actionable but still adaptable to their judgment.
+
+---
+Screen 5 — Copied/ready-to-use state
+Purpose: Reinforce completion and practical utility.
+
+Key UI elements:
+Success toast or modal:
+“Career brief copied”
+Copy options:
+Copy full brief
+Copy conversation plan only
+Optional destination hint:
+“Paste into your meeting doc or notes”
+Next-step CTA:
+“Open next report”
+“Back to profile”
+
+Why this screen matters:
+The artifact must feel immediately usable in a live meeting workflow.
+
+---
+Screen 6 — Sparse data / low-confidence state
+Purpose: Handle risk gracefully when evidence is too weak.
+
+Key UI elements:
+Empty-ish state card
+Message:
+“Not enough recent evidence to generate a strong brief yet”
+Available fallback:
+Show what data exists
+CTA: View recent notes
+Lightweight alternative:
+“Starter conversation template”
+Trust note:
+“We only show a draft when there’s enough signal to support it”
+Why this screen matters:
+Prevents generic AI output from undermining product trust.
+
+---
+
+4) Interaction details for the main happy path
+A. Entry interaction
+User lands on report profile
+Career brief card is visible above the fold or directly under recent themes
+CTA is high-emphasis: Generate brief
+If prototype wants to feel faster, use a preloaded state with a skeleton shimmer for 1–2 seconds
+B. Generation/loading
+On click, show:
+skeleton placeholders for section headers and bullets
+loading label: “Drafting brief from recent notes and feedback…”
+After load, reveal compact brief
+
+C. Skimmable default behavior
+Keep sections concise:
+Growth snapshot: 3 compact rows
+Evidence highlights: first 3 bullets only
+Conversation plan: visible without scrolling if possible
+Evidence details remain collapsed by default
+D. Citation interaction
+Citation pills like:
+1:1 note · Apr 9
+Feedback · May 2
+Clicking a citation opens side drawer or expands inline panel
+Highlight the referenced sentence and show exact source context
+
+E. Editing behavior
+Only Prep note is editable in MVP prototype
+Clicking into field switches to local edit mode
+Save action triggers toast:
+“Prep note saved”
+Keep edits local; don’t simulate complicated persistence
+F. Copy behavior
+Clicking Copy brief gives two options in prototype:
+full brief
+conversation plan only
+Show success confirmation
+Optional interaction: copied content preview in modal
+
+G. Feedback behavior
+Thumb actions live at module footer
+On click:
+selected state fills
+optional one-line follow-up:
+“What felt off?” for thumbs down
+Keep it lightweight; no full survey
+H. Regenerate behavior
+Regenerate opens small confirm menu:
+“Try a shorter version”
+“Try a more action-focused version”
+For prototype, swap in one alternate content variant
+
+---
+
+5) Sample UI copy
+Module entry
+Career brief
+Draft for your next growth conversation
+Based on the last 60 days of notes, feedback, and themes
+CTA: Generate brief
+Growth snapshot
+Likely aspiration
+“May be looking for broader ownership and more visibility in cross-functional work.”
+Strength to lean into
+“Builds trust quickly and follows through well on ambiguous projects.”
+Development area
+“Could benefit from clearer executive communication in cross-team settings.”
+Evidence highlights
+“In multiple 1:1s, they asked for more end-to-end ownership rather than narrower execution tasks.”
+“Peer feedback consistently describes them as dependable and calm under shifting priorities.”
+“Recent project notes suggest strong delivery, but updates to stakeholders sometimes lacked clear decision framing.”
+
+Citation pills:
+1:1 note · Mar 14
+Feedback summary · Apr 22
+Project retro · May 3
+Conversation plan
+Suggested talking points
+“Reflect on where they’ve felt most energized in recent work.”
+“Discuss where they want broader scope versus deeper expertise.”
+“Explore one communication skill that would unlock more visibility.”
+
+Open-ended questions
+“What kinds of problems do you want more ownership over in the next few months?”
+“Where do you feel ready to stretch, and where would more support help?”
+Suggested support
+“Offer ownership of a small cross-functional initiative.”
+“Coach on structuring updates around decisions, risks, and asks.”
+“Create exposure to a stakeholder meeting once this month.”
+
+Prep note
+Default text:
+“I want to validate whether broader ownership is actually motivating for them before suggesting next steps.”
+Trust/support copy
+“Why you’re seeing this”
+“This brief is a draft based on existing signals.”
+“Review and edit before using in conversation.”
+
+Feedback copy
+“Was this useful?”
+👍 Helpful
+👎 Needs work
+
+Sparse state copy
+Not enough recent signal for a strong career brief
+“We found limited recent notes or feedback for this report.”
+CTA: View recent notes
+Secondary CTA: Use starter conversation template
+Copy success
+“Career brief copied”
+“Ready to paste into your meeting doc”
+
+---
+
+6) Implementation notes for a quick clickable prototype
+Recommended prototype format
+Build as a simple Next.js app optimized for Vercel preview, but keep it prototype-light:
+Framework: Next.js App Router
+Styling: Tailwind CSS
+UI: shadcn/ui or lightweight custom components
+State: local React state only
+Data: hardcoded JSON mock data
+Goal: believable click-through, not backend completeness
+
+Minimal page architecture
+Routes
+/reports/[id] — main report profile page
+Optional:
+/reports/[id]?state=loaded
+/reports/[id]?state=sparse
+For a prototype, query params can control states:
+collapsed
+loading
+loaded
+evidence
+editing
+copied
+sparse
+
+Suggested component inventory
+ReportHeader
+CareerBriefCard
+SectionHeader
+GrowthSnapshot
+EvidenceHighlights
+CitationPill
+EvidenceDrawer
+ConversationPlan
+SuggestedSupport
+PrepNoteEditor
+FeedbackThumbs
+FreshnessChip
+DraftBadge
+CopyMenu
+EmptyStateCard
+Interaction implementation approach
+Use local state to simulate behavior:
+isGenerating
+isEvidenceOpen
+isEditingPrepNote
+copyState
+variant for regenerate mode
+isHelpful
+
+No backend required.
+Mock “AI generation” with:
+loading skeleton for 1200–1800ms
+then reveal prewritten JSON-driven content
+
+Mock data structure
+Use a single object like:
+type CareerBrief = {
+  freshnessLabel: string
+  growthSnapshot: {
+    aspiration: string
+    strength: string
+    developmentArea: string
+  }
+  evidence: {
+    id: string
+    sourceType: '1:1 note' | 'feedback' | 'theme'
+    date: string
+    quote: string
+    supports: string[]
+  }[]
+  talkingPoints: string[]
+  questions: string[]
+  supportActions: string[]
+  prepNote: string
+}
+Prototype fidelity recommendations
+Keep the visual design crisp but not over-polished
+Favor one excellent report detail page over many routes
+Include realistic note snippets and source labels
+Make evidence drill-down feel tangible
+Simulate copy success with toast and button state changes
+
+Vercel-friendly setup
+Static or mostly static app
+No auth
+No database
+No API route necessary unless you want a fake /api/generate
+If needed, fake generation via setTimeout
+What to include for review-readiness
+One polished happy-path route
+One sparse-data route
+One alternate regenerated variant
+Responsive enough for laptop review
+Seeded content for 1–2 direct reports
+
+Recommended screen order for prototype review
+Report page with collapsed card
+Loading state
+Loaded brief
+Evidence drill-down
+Edit prep note
+Copy success
+Sparse state
+If you want, I can also turn this into a wireframe-level screen map or a Next.js component tree with sample mock JSON.# PRD: Per-Report Career Conversation Brief
+Product thesis: Turn each direct report profile into a meeting-ready career coaching brief that helps managers run better growth conversations in under 2 minutes.
+Problem statement
+Managers want to support report growth, but they usually lack the time, confidence, and context to prepare for career conversations. Today, the product surfaces signals, notes, and themes, but managers still have to translate that information into a usable conversation plan themselves. That gap causes them to defer growth conversations or default to generic advice. We lose repeat value because insight consumption doesn’t convert into a concrete managerial action.
+Why now
+Retention is low after initial insight consumption. The clearest path to better repeat usage is to help managers complete a real job before a real meeting. Career conversations are frequent, stressful, and high value, especially around review cycles and org change. We already have enough existing signal to generate a credible first draft without introducing new workflow burden.
+Target user and core job to be done
+Target user: Frontline and mid-level managers with 3–12 direct reports, especially newer managers.
+JTBD: “Before I meet with a report, help me quickly understand their likely growth needs and give me a concrete way to run a useful career conversation.”
+Key insights and evidence
+Managers come back for meeting-ready artifacts more than passive summaries.
+The bottleneck is preparation structure, not intent.
+Trust depends on visible grounding in notes, feedback, and prior themes.
+A per-report artifact fits existing manager workflow better than a broad team-level tool.
+Goals and non-goals
+Goals
+Increase repeat usage of report pages.
+Reduce growth conversation prep time to under 2 minutes.
+Increase manager confidence starting development conversations.
+Make recommendations feel editable and evidence-based.
+
+Non-goals
+Full career ladder/framework in MVP.
+Employee-facing sharing.
+Formal performance review replacement.
+Promotion or attrition prediction.
+Hypotheses
+If each report page includes a meeting-ready career brief, managers will return more often before 1:1s and review cycles.
+If each recommendation is tied to explicit evidence, trust and usage will increase.
+If the artifact is lightweight and editable, adoption will beat a rigid template.
+Solution overview
+Add a Career brief module to each direct report page with 5 sections:
+Growth snapshot — likely aspirations, strengths, development area
+Evidence highlights — 3–5 cited observations from notes/feedback/themes
+Conversation plan — 3 suggested talking points, 2 open-ended questions
+Suggested support — concrete actions the manager can offer
+Prep note — editable manager note before the meeting
+The brief is clearly labeled as a draft, includes inline evidence citations, and supports copy / edit / regenerate actions.
+
+MVP scope
+In scope
+Career brief module on report page
+AI-generated draft from existing signals only
+Inline evidence citations
+Edit, copy, regenerate
+Freshness label like “based on last 60 days”
+Basic thumbs up/down feedback
+Out of scope
+Custom company frameworks
+Historical version diffing
+Cross-report calibration
+Employee sharing
+Deep admin controls
+
+User experience notes
+Compact and skimmable by default
+Recommendations must answer “why am I seeing this?”
+Evidence expands progressively, not all at once
+Tone should be practical, not HR-heavy
+Editing should be lightweight and local
+Success metrics
+Primary
+% of active managers opening at least one career brief weekly
+Repeat usage of report pages before scheduled 1:1s
+Brief copy/edit rate
+
+Secondary
+Thumbs-up usefulness rate
+Time from page open to first meaningful action
+Retention lift for exposed managers with 3+ reports
+Launch and iteration plan
+Phase 1: internal dogfood with manager accounts
+Phase 2: limited beta for managers with sufficient note density
+Phase 3: broader rollout, then test entry points from 1:1 prep surfaces
+
+First iteration should focus on:
+usefulness of each section
+citation trust
+desired balance of brevity vs guidance
+Risks and open questions
+Sparse data may produce generic briefs
+Managers may over-trust inferred aspirations
+Minimum evidence threshold is still undefined
+Open question: should prep notes persist across regenerations?
+
+---
+
+Clickable prototype recommendation
+The strongest prototype is a Career brief card/module embedded on the report profile page, not a separate workflow.
+Prototype thesis
+Show that managers will trust and use the feature if it is:
+compact first
+evidence-grounded
+action-oriented
+editable
+immediately copyable into a meeting workflow
+
+Prototype flow
+Open report page
+Generate/view career brief
+Inspect evidence via citation drawer
+Edit prep note
+Copy full brief or conversation plan
+Optional: regenerate
+Optional: sparse-data fallback state
+Core screens
+Report page with collapsed Career brief card
+Loading/generating state
+Loaded brief with all 5 sections
+Evidence drill-down drawer
+Edit prep note state
+Copy success state
+Sparse data fallback
+
+Key UX calls
+Default compact view
+Evidence hidden until requested
+Draft badge + freshness chip
+Only prep note editable in MVP
+Copy action as primary completion event
+Sparse-data state instead of low-confidence generic output
+Prototype implementation
+Best fast path is a Next.js + Tailwind lightweight Vercel prototype with mocked JSON and local state only. No backend needed.
+
+---
+
+Review-ready recommendation
+I’d take this into review with one core decision to align on:
+
+Should MVP optimize for “meeting-ready artifact” or “editable coaching workspace”?
+My recommendation: meeting-ready artifact first.
+That keeps scope tight, directly targets retention, and gives us a clearer success event: brief opened, trusted, edited, copied, used before a 1:1.
+
+If you want, next I can turn this into either:
+a one-page exec review memo, or
+a prototype-ready screen spec / annotated wireframe brief for design and engineering.
+BlueSoul — 1:32 AM
+2
+Pixie
+APP
+ — 1:32 AM
+1) Prototype goal
+
+Design a clickable report-profile page with an embedded Career Brief module that lets a manager prep for a 1:1 in under 2 minutes. The prototype should communicate:
+fast scan value
+clear “why this recommendation” via citations
+lightweight editing/regeneration
+confidence/freshness of AI output from existing signals only
+Primary success moment: manager opens a report page, scans the brief, expands evidence, tweaks a talking point or prep note, and copies the brief for use in a meeting.
+
+2) Core user flow
+Manager opens a direct report profile page.
+On the profile, they see a prominent Career Brief card near top of page content.
+They skim the default collapsed brief:
+Growth snapshot
+top conversation plan bullets
+freshness label
+They expand Evidence highlights to understand why the draft exists.
+They optionally:
+edit a talking point / question / prep note inline
+regenerate the brief
+thumbs up/down the output
+They copy the conversation plan or prep note for meeting use.
+
+3) Screens to design
+A. Report profile page + Career Brief default state
+Existing report header area mocked lightly: name, role, manager relationship, next 1:1 date.
+Embedded Career Brief card/module in-page.
+Card structure:
+Header: “Career Brief”
+Subheader/value prop: “Meeting-ready coaching brief generated from recent signals”
+Freshness chip: “Based on last 60 days”
+Actions: Copy, Edit, Regenerate, thumbs up, thumbs down
+Default collapsed content:
+Growth snapshot: 2–3 sentence summary
+Conversation plan preview: show 3 talking points only
+CTA/link to expand evidence
+Suggested support and Prep note visible but compact, 1–2 lines each
+B. Report profile page + expanded Evidence highlights
+Same page, same module, expanded accordion/section
+Evidence highlights with citations
+3–5 evidence items
+each item shows short insight statement + citation pills
+citation examples: “1:1 notes · May 12”, “Feedback · Apr 28”, “Goals update · May 3”
+Clicking a citation opens a lightweight side panel / popover with source snippet
+Progressive disclosure: only snippet preview first, full source not necessary
+C. Inline edit state
+Same module with lightweight editable fields
+Prefer section-level edit rather than full rich text editor
+Editable:
+Growth snapshot
+each talking point / question
+Suggested support
+Prep note
+Controls: Save, Cancel
+Keep edits simple: text area or inline input; no formatting tools
+D. Regenerate / loading state
+In-card loading skeleton after clicking Regenerate
+Preserve card frame and section labels
+Message: “Refreshing brief from recent signals…”
+Optional compare not needed for MVP; simply replace content
+E. Empty / insufficient-signal state
+Embedded card still visible
+Message: “Not enough recent signals to generate a strong brief”
+Show partial fallback:
+simple prompt to review recent goals / notes
+maybe one suggested conversation starter
+Regenerate disabled or secondary
+F. Feedback submitted state
+After thumbs up/down, show lightweight acknowledgment
+For thumbs down, optional tiny follow-up chip set: “Not useful”, “Too generic”, “Missing context”
+No large modal needed
+
+4) Interaction details
+Card placement: embedded on report page, above or near other insights modules
+Default density: skimmable, with only one expanded section at a time
+Evidence behavior: accordion expand/collapse; citations open side panel/popover anchored to item
+Citation content: source type, date, short excerpt, maybe source title; enough to answer “why am I seeing this?”
+Edit behavior: click Edit switches only relevant text areas into editable state; lightweight inline editing, not separate page
+Copy behavior: allow copy all or copy conversation plan/prep note; show brief success toast
+Regenerate behavior: replace draft in place; preserve layout; optional note “Updated just now”
+Freshness label: persistent visible chip in header
+Thumbs feedback: single click toggle; if downvote, reveal optional reason chips inline
+States to show clearly: default, expanded evidence, edit, loading/regenerating, empty/low-confidence, copied, feedback submitted
+Tone in UI copy: practical and manager-oriented; avoid talent/HR jargon
+
+5) Mock data needed
+
+Use one believable direct report profile with enough recent signals to support the module.
+
+Profile
+Name, role, tenure, team, next 1:1 date
+Example: “Jordan Lee, Product Designer II”
+Growth snapshot
+2–3 sentences summarizing likely growth theme
+Example themes: stakeholder communication, scoping independence, leadership readiness, prioritization
+
+Evidence highlights
+3–5 items tied to existing signals only
+Each item should include:
+short synthesized takeaway
+1–2 citations
+source snippet text for popover/panel
+Signal types:
+1:1 notes
+project feedback
+goals/progress updates
+peer feedback
+recent deliverable review
+Conversation plan
+3 talking points
+2 open-ended questions
+
+Suggested support
+2–3 concrete manager actions
+Example: assign ownership of a small cross-functional kickoff, give clearer decision boundaries
+
+Prep note
+1 short reminder for manager tone/context
+Example: “Acknowledge strong craft execution first; frame stretch around visibility, not lack of performance.”
+
+Freshness
+“Based on last 60 days”
+Edge-case mock
+second scenario with sparse data for empty/insufficient-signal state
+
+6) Open design questions
+Should Conversation plan or Growth snapshot be the primary visible section above the fold?
+Is Edit applied to the whole brief or per section for lower complexity?
+Should citations open in a side panel, popover, or inline expansion for fastest prototyping?
+Do we need a visible label for AI confidence/limitations beyond freshness?
+What is the minimal useful empty state when signals are too sparse?
+Should Copy default to entire brief or just meeting-ready sections?
+How much of the surrounding report page needs fidelity versus being chrome around the Career Brief card?
+Option #2 deep dive: Per-report Career Conversation Brief
+Recommendation: pursue this as the next retention bet. It is the cleanest path from passive insight consumption to a concrete, repeatable manager workflow.
+
+PRD summary
+Title and one-sentence product thesis
+Per-report Career Conversation Brief
+Turn each direct report profile into a meeting-ready career coaching brief that helps managers run better growth conversations in under 2 minutes.
+Problem statement
+Managers want to support report growth, but they lack time, confidence, and context to prep for career conversations. Current insight surfaces help them learn, but not act. As a result, they defer growth conversations or show up with generic talking points. That weakens product habit formation.
+Why now
+Low retention suggests insight consumption alone is not sticky enough. The fastest path to repeat usage is helping managers complete a real pre-meeting job with existing signals, especially around 1:1s and review cycles.
+Target user and core job to be done
+User: frontline and mid-level managers with 3–12 reports, especially newer managers.
+JTBD: “Before I meet with a report, help me quickly understand their likely growth needs and give me a concrete way to run a useful career conversation.”
+Key insights and evidence
+Meeting-ready artifacts outperform passive summaries.
+The bottleneck is structure and prep confidence, not manager intent.
+Trust requires visible evidence and citations.
+Per-report workflows fit manager behavior better than broad team-level planning.
+Goals and non-goals
+Goals
+Increase repeat opens of report pages
+Reduce prep time for growth conversations
+Increase copy/edit/use of generated artifacts
+Improve trust via evidence-linked recommendations
+
+Non-goals
+Full career framework
+Employee-facing sharing
+Review replacement
+Calibration or promotion decisioning
+Hypotheses
+Adding a Career Brief to each report page will increase repeat manager usage before 1:1s.
+Evidence-linked recommendations will improve trust and action rates.
+Lightweight editing and copy actions will outperform a heavier planning workflow.
+Solution overview
+Add a Career Brief module to each report page with:
+Growth snapshot
+Evidence highlights with citations
+Conversation plan with 3 talking points and 2 open-ended questions
+Suggested support
+Prep note
+
+Include:
+AI-generated draft from existing signals only
+Copy, edit, regenerate
+Freshness label like “based on last 60 days”
+Thumbs up/down feedback
+MVP scope
+In scope
+Embedded Career Brief card on report page
+Evidence citations and expandable source snippets
+Inline lightweight editing
+Copy all / copy section
+Regenerate
+Low-signal fallback state
+
+Out of scope
+Custom frameworks
+Historical versioning
+Cross-report calibration
+Employee sharing
+Admin configuration depth
+User experience notes
+Compact and skimmable by default
+Evidence hidden progressively, not fully expanded
+Practical manager tone
+Answer “why am I seeing this?” everywhere
+Edit inline, not in a separate workflow
+
+Success metrics
+Primary
+% of active managers opening at least one Career Brief weekly
+Repeat report-page usage before scheduled 1:1s
+Copy/edit rate on Career Briefs
+Secondary
+Thumbs-up usefulness rate
+Time to first action
+Retention lift for exposed managers with 3+ reports
+
+Launch and iteration plan
+Internal dogfood
+Limited beta for managers with enough signal density
+Roll out broadly, then test additional entry points from 1:1 prep surfaces
+Risks and open questions
+Sparse data may create generic output
+Managers may over-trust inferred aspirations
+Minimum evidence threshold needs definition
+Need to decide whether edits persist through regeneration
+
+---
+
+Designer handoff for clickable prototype
+Prototype goal
+Validate that managers will trust and use a compact, embedded Career Brief if it feels meeting-ready, evidence-grounded, and editable.
+Core prototype flow
+Open direct report profile
+See embedded Career Brief card
+Skim default summary
+Expand evidence highlights
+Open citation snippet
+Edit a talking point or prep note
+Copy the brief or conversation plan
+Optionally regenerate
+See sparse-data fallback in edge-case flow
+Screens to build
+Report page with default Career Brief state
+Expanded evidence state
+Inline edit state
+Regenerate/loading state
+Low-signal fallback state
+Feedback submitted / copy success state
+Important interaction details
+Card sits on report page, not as a separate page
+Default view shows growth snapshot + top conversation plan
+Evidence opens progressively via accordion
+Citations open a side panel or popover with source snippets
+Edit is inline and lightweight
+Copy should support full brief and conversation-plan-only
+Downvote should optionally collect “too generic / missing context / not useful”
+Mock data needed
+Use one believable report with:
+name, role, next 1:1
+3–5 evidence-backed growth signals
+3 talking points
+2 open-ended questions
+2–3 manager support actions
+1 prep note
+freshness label
+Also build one sparse-data example.
+
+---
+
+Review-ready recommendation
+I’d bring this to review with one key decision:
+
+Do we want to optimize MVP for artifact utility or workspace flexibility?
+My recommendation: artifact utility first.
+That gives us the clearest retention loop:
+open report page → trust the brief → copy/edit before 1:1 → come back next week.
+
+If useful, I can next turn this into either:
+a full exec review doc, or
+a prototype-ready screen spec formatted for design/engineering handoff.

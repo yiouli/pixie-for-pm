@@ -383,6 +383,11 @@ def build_runtime_providers() -> dict[str, IntegrationRuntimeProvider]:
 
 
 def _is_unauthorized_error(exc: Exception) -> bool:
+    if isinstance(exc, BaseExceptionGroup):
+        return any(
+            isinstance(child, Exception) and _is_unauthorized_error(child)
+            for child in exc.exceptions
+        )
     if isinstance(exc, httpx.HTTPStatusError) and exc.response.status_code == 401:
         return True
     message = str(exc).lower()

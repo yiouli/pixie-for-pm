@@ -6,6 +6,7 @@ from contextlib import AbstractAsyncContextManager
 from pathlib import Path
 from types import TracebackType
 
+import pixie
 from langgraph.checkpoint.sqlite.aio import AsyncSqliteSaver
 
 from pixie_for_pm.agents.registry import AgentHandler, resolve_agent_handlers
@@ -124,6 +125,26 @@ class PixieOrchestrator:
                 request.reason,
             )
             raise
+        turn_handoffs = pixie.wrap(
+            final_state["turn_handoffs"],
+            purpose="state",
+            name=f"handoff_sequence_{request.message.discord_message_id}",
+            description="Ordered internal agent handoffs performed for the current turn.",
+        )
+        del turn_handoffs
+        turn_transcript = pixie.wrap(
+            final_state["turn_transcript"],
+            purpose="output",
+            name=f"thread_messages_{request.message.discord_message_id}",
+            description="Visible thread messages produced during the current turn.",
+        )
+        public_reply = pixie.wrap(
+            "\n\n".join(message["content"] for message in turn_transcript),
+            purpose="output",
+            name=f"public_reply_{request.message.discord_message_id}",
+            description="Full public reply assembled from the visible thread messages.",
+        )
+        del public_reply
         return OrchestrationResult(
             thread_key=final_state["thread_key"],
             transcript=deserialize_transcript(final_state["turn_transcript"]),

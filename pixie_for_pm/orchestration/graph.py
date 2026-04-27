@@ -43,6 +43,7 @@ class WorkflowState(TypedDict):
     current_handoff_reason: str | None
     transcript: Annotated[list[SerializedAgentMessage], add]
     turn_transcript: list[SerializedAgentMessage]
+    turn_handoffs: list[SerializedAgentHandoff]
     pending_handoffs: list[SerializedAgentHandoff]
 
 
@@ -66,6 +67,7 @@ def build_initial_state(request: DispatchRequest) -> WorkflowState:
         current_handoff_reason=None,
         transcript=[],
         turn_transcript=[],
+        turn_handoffs=[],
         pending_handoffs=[],
     )
 
@@ -158,10 +160,12 @@ def _agent_node(
             for message in execution.messages:
                 await emit_public_message(public_message_emitter, message.content)
         serialized_messages = _serialize_messages(execution.messages)
+        serialized_handoffs = _serialize_handoffs(execution.handoffs)
         return {
             "transcript": serialized_messages,
             "turn_transcript": state["turn_transcript"] + serialized_messages,
-            "pending_handoffs": _serialize_handoffs(execution.handoffs),
+            "turn_handoffs": state["turn_handoffs"] + serialized_handoffs,
+            "pending_handoffs": serialized_handoffs,
         }
 
     return _run_agent
@@ -202,7 +206,11 @@ def _route_after_agent(state: WorkflowState) -> str:
 
 def _dispatch_node(state: WorkflowState) -> dict[str, object]:
     del state
-    return {"turn_transcript": [], "current_handoff_reason": None}
+    return {
+        "turn_transcript": [],
+        "turn_handoffs": [],
+        "current_handoff_reason": None,
+    }
 
 
 async def _handoff_node(state: WorkflowState) -> dict[str, object]:

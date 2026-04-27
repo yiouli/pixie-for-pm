@@ -630,7 +630,21 @@ async def test_orchestrator_runs_retention_demo_discovery_and_deep_dive_flow(
                     channel_id=29,
                     thread_id=thread_id,
                     author_id=38,
-                    content="Can you go deeper on #2?",
+                    content="Go deeper on option #2.",
+                    directly_mentions_bot=False,
+                    is_reply_to_bot=True,
+                )
+            )
+        )
+        third_result = await orchestrator.dispatch(
+            build_dispatch_request(
+                IncomingDiscordMessage(
+                    discord_message_id=21,
+                    discord_server_id="discord-server-demo",
+                    channel_id=29,
+                    thread_id=thread_id,
+                    author_id=38,
+                    content="sure",
                     directly_mentions_bot=False,
                     is_reply_to_bot=True,
                 )
@@ -638,19 +652,27 @@ async def test_orchestrator_runs_retention_demo_discovery_and_deep_dive_flow(
         )
 
     assert [message.agent for message in first_result.transcript] == [
-        AgentRole.PRODUCT_MANAGER,
-        AgentRole.PRODUCT_MANAGER,
+        AgentRole.PRODUCT_MANAGER
     ]
-    assert "here's how i'm thinking" in first_result.transcript[0].content.lower()
-    assert "user researcher" in first_result.transcript[0].content.lower()
-    assert "three hypotheses" in first_result.transcript[0].content.lower()
-    assert "three hypotheses" in first_result.transcript[1].content.lower()
-    assert "which direction do you want me to deepen" in (
-        first_result.transcript[1].content.lower()
+    assert "here's how i'm thinking" not in first_result.transcript[0].content.lower()
+    assert "planned steps" not in first_result.transcript[0].content.lower()
+    first_turn_content = first_result.transcript[0].content.lower()
+    assert first_turn_content.startswith("1. ")
+    assert (
+        "which direction do you want me to deepen" in first_turn_content
+        or "which option should i deepen next" in first_turn_content
     )
 
     assert [message.agent for message in second_result.transcript] == [
         AgentRole.PRODUCT_MANAGER
     ]
-    assert "clickable vercel prototype" in second_result.transcript[0].content.lower()
-    assert "review the prototype flow" in second_result.transcript[0].content.lower()
+    second_turn_content = second_result.transcript[0].content.lower()
+    assert "prd for option #2" in second_turn_content
+    assert "prototype" in second_turn_content
+
+    assert [message.agent for message in third_result.transcript] == [
+        AgentRole.PRODUCT_MANAGER
+    ]
+    third_turn_content = third_result.transcript[0].content.lower()
+    assert "prototype" in third_turn_content
+    assert "tell me what you want to change" in third_turn_content

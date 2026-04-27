@@ -20,12 +20,13 @@ dependencies = [
     "langgraph>=0.4.7",
     "langgraph-checkpoint-sqlite>=2.0.6",
     "mcp>=1.27.0",
+    "pixie-qa[all]>=0.8.4,<0.9.0",
     "supabase>=2.15.3",
     "uvicorn[standard]>=0.34.2",
 ]
 
 [project.scripts]
-pixie = "pixie_for_pm.main:main"
+pixie-pm = "pixie_for_pm.main:main"
 
 [dependency-groups]
 dev = [
