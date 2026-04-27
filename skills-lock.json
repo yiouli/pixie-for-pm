@@ -1,0 +1,10 @@
+{
+  "version": 1,
+  "skills": {
+    "eval-driven-dev": {
+      "source": "yiouli/pixie-qa",
+      "sourceType": "github",
+      "computedHash": "484bf5f44e3637c00f50a2f8800dfcfa04ac7cf4193a43a93d0cac307ed0ffcb"
+    }
+  }
+}
