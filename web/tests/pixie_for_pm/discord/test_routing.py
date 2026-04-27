@@ -2,7 +2,7 @@ from pixie_for_pm.discord.routing import build_dispatch_request
 from pixie_for_pm.domain.models import AgentRole, IncomingDiscordMessage
 
 
-def test_routes_direct_bot_mentions_to_the_product_manager_entrypoint() -> None:
+def test_routes_direct_bot_mentions_to_the_coordinator_entrypoint() -> None:
     request = build_dispatch_request(
         IncomingDiscordMessage(
             discord_message_id=101,
@@ -16,11 +16,11 @@ def test_routes_direct_bot_mentions_to_the_product_manager_entrypoint() -> None:
         )
     )
 
-    assert request.target_agent is AgentRole.DISPATCHER
+    assert request.target_agent is AgentRole.COORDINATOR
     assert request.reason == "direct_bot_mention"
 
 
-def test_routes_bot_replies_back_to_the_product_manager_entrypoint() -> None:
+def test_routes_bot_replies_back_to_the_coordinator_entrypoint() -> None:
     request = build_dispatch_request(
         IncomingDiscordMessage(
             discord_message_id=111,
@@ -34,11 +34,11 @@ def test_routes_bot_replies_back_to_the_product_manager_entrypoint() -> None:
         )
     )
 
-    assert request.target_agent is AgentRole.DISPATCHER
+    assert request.target_agent is AgentRole.COORDINATOR
     assert request.reason == "reply_to_bot"
 
 
-def test_routes_other_messages_to_the_product_manager_entrypoint() -> None:
+def test_routes_other_messages_to_the_coordinator_entrypoint() -> None:
     request = build_dispatch_request(
         IncomingDiscordMessage(
             discord_message_id=121,
@@ -52,5 +52,5 @@ def test_routes_other_messages_to_the_product_manager_entrypoint() -> None:
         )
     )
 
-    assert request.target_agent is AgentRole.DISPATCHER
+    assert request.target_agent is AgentRole.COORDINATOR
     assert request.reason == "discord_message"

@@ -17,6 +17,6 @@ def build_dispatch_request(message: IncomingDiscordMessage) -> DispatchRequest:
 
     return DispatchRequest(
         message=message,
-        target_agent=AgentRole.DISPATCHER,
+        target_agent=AgentRole.COORDINATOR,
         reason=reason,
     )

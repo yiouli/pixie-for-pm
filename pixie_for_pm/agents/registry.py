@@ -2,13 +2,16 @@ from __future__ import annotations
 
 from collections.abc import Awaitable, Callable, Mapping
 
-from pixie_for_pm.agents.dispatcher import build_dispatcher_handler
+from pixie_for_pm.agents.dispatcher import (
+    build_coordinator_handler,
+    build_dispatcher_handler,
+)
 from pixie_for_pm.agents.product_designer import build_product_designer_handler
 from pixie_for_pm.agents.product_manager import build_product_manager_handler
 from pixie_for_pm.agents.user_researcher import build_user_researcher_handler
 from pixie_for_pm.domain.models import (
     AgentExecution,
-    AgentMessage,
+    AgentHandoff,
     AgentRole,
     WorkflowContext,
 )
@@ -27,14 +30,17 @@ def _placeholder_message(role: AgentRole, user_message: str) -> str:
 def _build_placeholder_handler(role: AgentRole) -> AgentHandler:
     async def _handler(context: WorkflowContext) -> AgentExecution:
         return AgentExecution(
-            messages=[
-                AgentMessage(
-                    agent=role,
-                    content=_placeholder_message(
-                        role=role, user_message=context.user_message
+            messages=[],
+            handoffs=[
+                AgentHandoff(
+                    source_agent=role,
+                    target_agent=AgentRole.COORDINATOR,
+                    reason=_placeholder_message(
+                        role=role,
+                        user_message=context.user_message,
                     ),
                 )
-            ]
+            ],
         )
 
     return _handler
@@ -42,7 +48,7 @@ def _build_placeholder_handler(role: AgentRole) -> AgentHandler:
 
 def default_agent_handlers() -> dict[AgentRole, AgentHandler]:
     handlers = {role: _build_placeholder_handler(role) for role in AgentRole}
-    handlers[AgentRole.DISPATCHER] = build_dispatcher_handler()
+    handlers[AgentRole.COORDINATOR] = build_coordinator_handler()
     handlers[AgentRole.PRODUCT_MANAGER] = build_product_manager_handler()
     handlers[AgentRole.PRODUCT_DESIGNER] = build_product_designer_handler()
     handlers[AgentRole.USER_RESEARCHER] = build_user_researcher_handler()
@@ -60,6 +66,7 @@ def resolve_agent_handlers(
 
 __all__ = [
     "AgentHandler",
+    "build_coordinator_handler",
     "build_dispatcher_handler",
     "build_product_designer_handler",
     "build_product_manager_handler",

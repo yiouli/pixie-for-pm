@@ -42,17 +42,13 @@ class _ToolCallingFakeListChatModel(FakeListChatModel):
 
 
 async def _pm_with_handoff(context: WorkflowContext) -> AgentExecution:
+    del context
     return AgentExecution(
-        messages=[
-            AgentMessage(
-                agent=AgentRole.PRODUCT_MANAGER,
-                content=f"Placeholder planning response for: {context.user_message}",
-            )
-        ],
+        messages=[],
         handoffs=[
             AgentHandoff(
                 source_agent=AgentRole.PRODUCT_MANAGER,
-                target_agent=AgentRole.MARKET_ANALYST,
+                target_agent=AgentRole.COORDINATOR,
                 reason="Need a market sizing pass before drafting the PRD.",
             )
         ],
@@ -61,32 +57,79 @@ async def _pm_with_handoff(context: WorkflowContext) -> AgentExecution:
 
 async def _market_placeholder(context: WorkflowContext) -> AgentExecution:
     return AgentExecution(
-        messages=[
-            AgentMessage(
-                agent=AgentRole.MARKET_ANALYST,
-                content=f"Placeholder market analysis response for: {context.user_message}",
+        messages=[],
+        handoffs=[
+            AgentHandoff(
+                source_agent=AgentRole.MARKET_ANALYST,
+                target_agent=AgentRole.COORDINATOR,
+                reason=(
+                    "Market sizing complete: "
+                    f"Placeholder market analysis response for: {context.user_message}"
+                ),
             )
-        ]
+        ],
     )
 
 
 async def _research_placeholder(context: WorkflowContext) -> AgentExecution:
     return AgentExecution(
-        messages=[
-            AgentMessage(
-                agent=AgentRole.USER_RESEARCHER,
-                content=f"Placeholder research synthesis response for: {context.user_message}",
+        messages=[],
+        handoffs=[
+            AgentHandoff(
+                source_agent=AgentRole.USER_RESEARCHER,
+                target_agent=AgentRole.COORDINATOR,
+                reason=(
+                    "Research synthesis complete: "
+                    f"Placeholder research synthesis response for: {context.user_message}"
+                ),
             )
-        ]
+        ],
     )
 
 
 async def _pm_direct_response(context: WorkflowContext) -> AgentExecution:
     return AgentExecution(
+        messages=[],
+        handoffs=[
+            AgentHandoff(
+                source_agent=AgentRole.PRODUCT_MANAGER,
+                target_agent=AgentRole.COORDINATOR,
+                reason=f"PM direct response for: {context.user_message}",
+            )
+        ],
+    )
+
+
+async def _coordinator_market_router(context: WorkflowContext) -> AgentExecution:
+    if context.handoff_context is None:
+        return AgentExecution(
+            messages=[],
+            handoffs=[
+                AgentHandoff(
+                    source_agent=AgentRole.COORDINATOR,
+                    target_agent=AgentRole.PRODUCT_MANAGER,
+                    reason="Start planning review.",
+                )
+            ],
+        )
+
+    if context.handoff_context == "Need a market sizing pass before drafting the PRD.":
+        return AgentExecution(
+            messages=[],
+            handoffs=[
+                AgentHandoff(
+                    source_agent=AgentRole.COORDINATOR,
+                    target_agent=AgentRole.MARKET_ANALYST,
+                    reason="Run the requested market sizing pass.",
+                )
+            ],
+        )
+
+    return AgentExecution(
         messages=[
             AgentMessage(
-                agent=AgentRole.PRODUCT_MANAGER,
-                content=f"PM direct response for: {context.user_message}",
+                agent=AgentRole.COORDINATOR,
+                content=context.handoff_context,
             )
         ]
     )
@@ -97,14 +140,14 @@ async def _failing_handler(context: WorkflowContext) -> AgentExecution:
     raise RuntimeError("agent failure")
 
 
-async def _invalid_dispatcher_handoff(context: WorkflowContext) -> AgentExecution:
+async def _invalid_specialist_handoff(context: WorkflowContext) -> AgentExecution:
     return AgentExecution(
         messages=[],
         handoffs=[
             AgentHandoff(
                 source_agent=AgentRole.PRODUCT_MANAGER,
-                target_agent=AgentRole.DISPATCHER,
-                reason="Attempting to re-dispatch.",
+                target_agent=AgentRole.PRODUCT_DESIGNER,
+                reason="Attempting to bypass coordinator review.",
             )
         ],
     )
@@ -157,12 +200,14 @@ async def _assert_tool_context(context: WorkflowContext) -> AgentExecution:
     ] == ["notion"]
     assert context.toolset.as_langgraph_tools() == context.toolset.tools
     return AgentExecution(
-        messages=[
-            AgentMessage(
-                agent=AgentRole.PRODUCT_MANAGER,
-                content="Tool-aware placeholder response",
+        messages=[],
+        handoffs=[
+            AgentHandoff(
+                source_agent=AgentRole.PRODUCT_MANAGER,
+                target_agent=AgentRole.COORDINATOR,
+                reason="Tool-aware placeholder response",
             )
-        ]
+        ],
     )
 
 
@@ -201,9 +246,7 @@ async def test_orchestrator_runs_product_manager_deep_agent_and_persists_sqlite_
         result = await orchestrator.dispatch(request)
 
     assert (tmp_path / "pixie.sqlite").exists()
-    assert [message.agent for message in result.transcript] == [
-        AgentRole.PRODUCT_MANAGER
-    ]
+    assert [message.agent for message in result.transcript] == [AgentRole.COORDINATOR]
     assert result.transcript[0].content.startswith("PM_AGENT_OK")
     assert "onboarding" in result.transcript[0].content.lower()
 
@@ -227,23 +270,24 @@ async def test_orchestrator_keeps_handoffs_out_of_the_public_transcript(
             directly_mentions_bot=True,
             is_reply_to_bot=False,
         ),
-        target_agent=AgentRole.PRODUCT_MANAGER,
+        target_agent=AgentRole.COORDINATOR,
         reason="direct_bot_mention",
     )
 
     async with PixieOrchestrator(
         checkpoint_path=tmp_path / "handoff.sqlite",
-        agent_handlers=handlers,
+        agent_handlers={
+            AgentRole.COORDINATOR: _coordinator_market_router,
+            **handlers,
+        },
     ) as orchestrator:
         result = await orchestrator.dispatch(request)
 
-    assert [message.agent for message in result.transcript] == [
-        AgentRole.PRODUCT_MANAGER,
-        AgentRole.MARKET_ANALYST,
-    ]
+    assert [message.agent for message in result.transcript] == [AgentRole.COORDINATOR]
     assert all(
         "handoff" not in message.content.lower() for message in result.transcript
     )
+    assert "market sizing complete" in result.transcript[0].content.lower()
 
 
 @pytest.mark.asyncio
@@ -310,7 +354,7 @@ async def test_orchestrator_emits_progress_updates_for_tool_init_and_handoffs(
             directly_mentions_bot=True,
             is_reply_to_bot=False,
         ),
-        target_agent=AgentRole.PRODUCT_MANAGER,
+        target_agent=AgentRole.COORDINATOR,
         reason="direct_bot_mention",
     )
     initializer = _StaticToolsetInitializer(AgentToolset())
@@ -319,6 +363,7 @@ async def test_orchestrator_emits_progress_updates_for_tool_init_and_handoffs(
     async with PixieOrchestrator(
         checkpoint_path=tmp_path / "progress.sqlite",
         agent_handlers={
+            AgentRole.COORDINATOR: _coordinator_market_router,
             AgentRole.PRODUCT_MANAGER: _pm_with_handoff,
             AgentRole.MARKET_ANALYST: _market_placeholder,
         },
@@ -331,9 +376,15 @@ async def test_orchestrator_emits_progress_updates_for_tool_init_and_handoffs(
 
     assert progress_updates == [
         "Checking connected tools...",
+        "Analyzing with coordinator...",
+        "Handing off to product manager...",
         "Analyzing with product manager...",
+        "Handing off to coordinator...",
+        "Analyzing with coordinator...",
         "Handing off to market analyst...",
         "Analyzing with market analyst...",
+        "Handing off to coordinator...",
+        "Analyzing with coordinator...",
     ]
 
 
@@ -380,6 +431,8 @@ async def test_orchestrator_emits_internal_product_manager_status_updates(
         "Analyzing with product manager...",
         "Product manager is reasoning...",
         "Product manager is drafting the response...",
+        "Handing off to coordinator...",
+        "Analyzing with coordinator...",
     ]
 
 
@@ -441,9 +494,8 @@ async def test_orchestrator_dispatches_market_requests_to_market_analyst(
     ) as orchestrator:
         result = await orchestrator.dispatch(request)
 
-    assert [message.agent for message in result.transcript] == [
-        AgentRole.MARKET_ANALYST
-    ]
+    assert [message.agent for message in result.transcript] == [AgentRole.COORDINATOR]
+    assert "market analysis response" in result.transcript[0].content.lower()
 
 
 @pytest.mark.asyncio
@@ -469,9 +521,8 @@ async def test_orchestrator_dispatches_research_requests_to_user_researcher(
     ) as orchestrator:
         result = await orchestrator.dispatch(request)
 
-    assert [message.agent for message in result.transcript] == [
-        AgentRole.USER_RESEARCHER
-    ]
+    assert [message.agent for message in result.transcript] == [AgentRole.COORDINATOR]
+    assert "research synthesis response" in result.transcript[0].content.lower()
 
 
 @pytest.mark.asyncio
@@ -497,9 +548,8 @@ async def test_orchestrator_dispatches_ambiguous_requests_to_product_manager(
     ) as orchestrator:
         result = await orchestrator.dispatch(request)
 
-    assert [message.agent for message in result.transcript] == [
-        AgentRole.PRODUCT_MANAGER
-    ]
+    assert [message.agent for message in result.transcript] == [AgentRole.COORDINATOR]
+    assert "pm direct response" in result.transcript[0].content.lower()
 
 
 @pytest.mark.asyncio
@@ -524,12 +574,12 @@ async def test_orchestrator_dispatcher_rejects_irrelevant_requests(
     ) as orchestrator:
         result = await orchestrator.dispatch(request)
 
-    assert [message.agent for message in result.transcript] == [AgentRole.DISPATCHER]
+    assert [message.agent for message in result.transcript] == [AgentRole.COORDINATOR]
     assert "product" in result.transcript[0].content.lower()
 
 
 @pytest.mark.asyncio
-async def test_orchestrator_rejects_handoffs_back_to_dispatcher(
+async def test_orchestrator_rejects_specialist_handoffs_to_other_specialists(
     tmp_path: Path,
 ) -> None:
     request = DispatchRequest(
@@ -548,10 +598,10 @@ async def test_orchestrator_rejects_handoffs_back_to_dispatcher(
     )
 
     async with PixieOrchestrator(
-        checkpoint_path=tmp_path / "dispatcher-invalid-handoff.sqlite",
-        agent_handlers={AgentRole.PRODUCT_MANAGER: _invalid_dispatcher_handoff},
+        checkpoint_path=tmp_path / "coordinator-invalid-handoff.sqlite",
+        agent_handlers={AgentRole.PRODUCT_MANAGER: _invalid_specialist_handoff},
     ) as orchestrator:
-        with pytest.raises(ValueError, match="dispatcher"):
+        with pytest.raises(ValueError, match="coordinator"):
             await orchestrator.dispatch(request)
 
 
@@ -652,11 +702,11 @@ async def test_orchestrator_runs_retention_demo_discovery_and_deep_dive_flow(
         )
 
     assert [message.agent for message in first_result.transcript] == [
-        AgentRole.PRODUCT_MANAGER
+        AgentRole.COORDINATOR,
+        AgentRole.COORDINATOR,
     ]
-    assert "here's how i'm thinking" not in first_result.transcript[0].content.lower()
-    assert "planned steps" not in first_result.transcript[0].content.lower()
-    first_turn_content = first_result.transcript[0].content.lower()
+    assert "user interviews" in first_result.transcript[0].content.lower()
+    first_turn_content = first_result.transcript[-1].content.lower()
     assert first_turn_content.startswith("1. ")
     assert (
         "which direction do you want me to deepen" in first_turn_content
@@ -664,15 +714,19 @@ async def test_orchestrator_runs_retention_demo_discovery_and_deep_dive_flow(
     )
 
     assert [message.agent for message in second_result.transcript] == [
-        AgentRole.PRODUCT_MANAGER
+        AgentRole.COORDINATOR,
+        AgentRole.COORDINATOR,
     ]
-    second_turn_content = second_result.transcript[0].content.lower()
+    assert second_result.transcript[0].content.lower() == "sure. let me do that"
+    second_turn_content = second_result.transcript[-1].content.lower()
     assert "prd for option #2" in second_turn_content
     assert "prototype" in second_turn_content
 
     assert [message.agent for message in third_result.transcript] == [
-        AgentRole.PRODUCT_MANAGER
+        AgentRole.COORDINATOR,
+        AgentRole.COORDINATOR,
     ]
-    third_turn_content = third_result.transcript[0].content.lower()
+    assert third_result.transcript[0].content.lower() == "on it."
+    third_turn_content = third_result.transcript[-1].content.lower()
     assert "prototype" in third_turn_content
-    assert "tell me what you want to change" in third_turn_content
+    assert "let me know what you think" in third_turn_content

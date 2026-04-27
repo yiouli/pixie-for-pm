@@ -4,7 +4,7 @@
 
 The scaffold establishes two coordinated surfaces for a product collaboration system with five internal agent roles:
 
-- dispatcher
+- coordinator
 - product manager
 - market analyst
 - user researcher
@@ -16,15 +16,15 @@ The first surface is a single public Discord bot. The second surface is a settin
 
 1. A user explicitly addresses the bot in a guild message by mentioning the bot account or replying to a prior bot message.
 2. The Discord adapter normalizes the trigger into a typed `IncomingDiscordMessage` plus routing reason metadata.
-3. Routing converts the trigger into a `DispatchRequest` that enters the dispatcher entrypoint.
+3. Routing converts the trigger into a `DispatchRequest` that enters the coordinator entrypoint.
 4. The orchestrator derives a typed Discord trigger context, resolves the guild's active integrations, and expands them into a request-scoped tool bundle built from `langchain_core` tools.
 5. The LangGraph runtime loads or creates thread state using the configured SQLite checkpoint store.
-6. The dispatcher either rejects out-of-scope work directly, defaults ambiguous work to the product manager, or hands off to a specialist.
+6. The coordinator either rejects out-of-scope work directly, defaults ambiguous work to the product manager, or hands off to a specialist.
 7. The selected agent executes with access to the typed trigger context and initialized tool bundle.
 8. The user researcher specialist requires a live Notion integration and uses it as both the read surface for product and research context and the write surface for transcript tagging plus final synthesis artifacts.
-9. The product manager can use structured handoff context to keep delegated research findings, PRD drafts, and designer prototype summaries private inside the same turn before it sends the public reply.
-10. If the execution returns handoffs, the graph routes to the next internal agent without emitting a public Discord handoff message. Agents can hand off among the specialist roles, but they cannot hand work back to the dispatcher.
-11. The current turn’s messages are returned to the Discord transport for publication as a single public bot reply.
+9. Specialists store their results in shared workflow state and return them to the coordinator instead of replying publicly.
+10. If the execution returns handoffs, the graph routes to the next internal agent without emitting a public Discord handoff message. Only the coordinator can choose the next specialist; non-coordinator agents always hand control back to the coordinator.
+11. The current turn’s public messages come from the coordinator, which can acknowledge long-running work and then publish the final user-facing reply for the turn.
 
 ## Discord Install Flow
 
@@ -98,12 +98,14 @@ The user researcher agent follows the interview synthesis handbook as an operati
 
 ## Demo Retention Workflow
 
-For the current demo scenario, the PM-led orchestration path is intentionally specific:
+For the current demo scenario, the coordinator-led orchestration path is intentionally specific:
 
-1. The dispatcher routes a retention-next-step question to the product manager.
-2. The product manager delegates the initial discovery step to the user researcher.
-3. The user researcher returns a private synthesis back to the product manager.
-4. The product manager responds publicly with three hypotheses plus a high-level proposal for each and asks which option to deepen.
-5. On a follow-up like "go deeper on #2", the product manager drafts a Lenny Rachitsky-style PRD internally.
-6. The product designer turns that PRD into a clickable prototype brief, using Vercel when connected.
-7. The product manager returns to the user with a concise review-ready summary of the PRD and prototype.
+1. The coordinator acknowledges the retention-next-step question and routes the discovery step to the user researcher.
+2. The user researcher returns a private synthesis to the coordinator.
+3. The coordinator routes those findings to the product manager for JTBD-level option framing.
+4. The product manager returns three hypotheses plus high-level proposals to the coordinator.
+5. The coordinator publishes those options to the user and captures the selected option.
+6. The coordinator routes the selected option to the product manager for a Lenny Rachitsky-style PRD draft.
+7. The product manager returns the PRD artifact to the coordinator, which asks whether to spin up a prototype.
+8. If approved, the coordinator routes the PRD to the product designer for a clickable prototype.
+9. The product designer returns the prototype summary to the coordinator, which publishes the final user-facing message.

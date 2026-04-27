@@ -52,7 +52,8 @@ async def emit_public_message(
 
 
 class AgentRole(StrEnum):
-    DISPATCHER = "dispatcher"
+    COORDINATOR = "coordinator"
+    DISPATCHER = "coordinator"
     PRODUCT_MANAGER = "product_manager"
     MARKET_ANALYST = "market_analyst"
     USER_RESEARCHER = "user_researcher"

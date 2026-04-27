@@ -19,7 +19,6 @@ from pixie_for_pm.agents.demo_flow import (
 from pixie_for_pm.domain.models import (
     AgentExecution,
     AgentHandoff,
-    AgentMessage,
     AgentRole,
     WorkflowContext,
 )
@@ -72,12 +71,14 @@ def build_product_designer_handler(
             execution_context_builder=_build_execution_context,
         )
         return AgentExecution(
-            messages=[
-                AgentMessage(
-                    agent=AgentRole.PRODUCT_DESIGNER,
-                    content=content,
+            messages=[],
+            handoffs=[
+                AgentHandoff(
+                    source_agent=AgentRole.PRODUCT_DESIGNER,
+                    target_agent=AgentRole.COORDINATOR,
+                    reason=content,
                 )
-            ]
+            ],
         )
 
     return _handler
@@ -107,7 +108,7 @@ async def _handle_demo_prototype_brief(
             handoffs=[
                 AgentHandoff(
                     source_agent=AgentRole.PRODUCT_DESIGNER,
-                    target_agent=AgentRole.PRODUCT_MANAGER,
+                    target_agent=AgentRole.COORDINATOR,
                     reason=serialize_demo_handoff(
                         stage=PROTOTYPE_SUMMARY_STAGE,
                         status=BLOCKED_STATUS,
@@ -145,7 +146,7 @@ async def _handle_demo_prototype_brief(
         handoffs=[
             AgentHandoff(
                 source_agent=AgentRole.PRODUCT_DESIGNER,
-                target_agent=AgentRole.PRODUCT_MANAGER,
+                target_agent=AgentRole.COORDINATOR,
                 reason=serialize_demo_handoff(
                     stage=PROTOTYPE_SUMMARY_STAGE,
                     artifact=summary,

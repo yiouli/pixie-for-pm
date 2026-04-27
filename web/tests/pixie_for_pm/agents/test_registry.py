@@ -4,7 +4,13 @@ from langchain_core.tools import StructuredTool
 from pydantic import BaseModel, Field
 
 from pixie_for_pm.agents.demo_flow import (
+    OPTIONS_SUMMARY_STAGE,
+    PRD_BRIEF_STAGE,
+    PRD_READY_STAGE,
     PROTOTYPE_BRIEF_STAGE,
+    RESEARCH_BRIEF_STAGE,
+    RESEARCH_FINDINGS_STAGE,
+    parse_demo_handoff,
     serialize_demo_handoff,
 )
 from pixie_for_pm.agents.product_manager import PRODUCT_MANAGER_SYSTEM_PROMPT
@@ -170,10 +176,14 @@ async def test_dispatcher_handler_routes_retention_strategy_questions_to_product
         )
     )
 
-    assert execution.messages == []
+    assert [message.agent for message in execution.messages] == [AgentRole.COORDINATOR]
+    assert "user interviews" in execution.messages[0].content.lower()
     assert [handoff.target_agent for handoff in execution.handoffs] == [
-        AgentRole.PRODUCT_MANAGER
+        AgentRole.USER_RESEARCHER
     ]
+    demo_payload = parse_demo_handoff(execution.handoffs[0].reason)
+    assert demo_payload is not None
+    assert demo_payload.stage == RESEARCH_BRIEF_STAGE
 
 
 @pytest.mark.asyncio
@@ -200,7 +210,7 @@ async def test_dispatcher_handler_rejects_irrelevant_requests_directly() -> None
     )
 
     assert execution.handoffs == []
-    assert execution.messages[0].agent is AgentRole.DISPATCHER
+    assert execution.messages[0].agent is AgentRole.COORDINATOR
     assert "product" in execution.messages[0].content.lower()
 
 
@@ -234,28 +244,40 @@ async def test_product_manager_handler_returns_deep_agent_response() -> None:
         )
     )
 
-    assert execution.handoffs == []
-    assert execution.messages[0].agent is AgentRole.PRODUCT_MANAGER
-    assert execution.messages[0].content.startswith("PM_AGENT_OK")
-    assert "activation" in execution.messages[0].content.lower()
+    assert execution.messages == []
+    assert [handoff.target_agent for handoff in execution.handoffs] == [
+        AgentRole.COORDINATOR
+    ]
+    assert execution.handoffs[0].reason.startswith("PM_AGENT_OK")
+    assert "activation" in execution.handoffs[0].reason.lower()
 
 
 @pytest.mark.asyncio
-async def test_product_manager_handler_delegates_demo_retention_questions_to_user_researcher() -> (
+async def test_product_manager_handler_turns_research_findings_into_coordinator_handoff() -> (
     None
 ):
     handler = build_product_manager_handler(
-        model=_ToolCallingFakeListChatModel(responses=["unused"])
+        model=_ToolCallingFakeListChatModel(
+            responses=[
+                (
+                    "1. Guided loop - Idea: Add a weekly prep loop. "
+                    "Why: It creates a repeat habit. Proposal: Show the next "
+                    "step before each 1:1.\n"
+                    "2. Manager brief - Idea: Generate a career brief. "
+                    "Why: It reduces prep friction. Proposal: Auto-build a concise "
+                    "report.\n"
+                    "3. Evidence link - Idea: Connect growth frameworks to evidence. "
+                    "Why: It boosts confidence. Proposal: Attach supporting signals."
+                )
+            ]
+        )
     )
 
     execution = await handler(
         WorkflowContext(
             thread_key="discord-thread-1",
             current_agent=AgentRole.PRODUCT_MANAGER,
-            user_message=(
-                "It seems that feature X retention is low. What should we build "
-                "next to improve that?"
-            ),
+            user_message="unused for handoff-driven demo stage",
             transcript=(),
             trigger=DiscordTriggerContext(
                 discord_server_id="discord-server-1",
@@ -267,14 +289,21 @@ async def test_product_manager_handler_delegates_demo_retention_questions_to_use
                 dispatch_reason="direct_bot_mention",
             ),
             toolset=AgentToolset(),
+            handoff_context=serialize_demo_handoff(
+                stage=RESEARCH_FINDINGS_STAGE,
+                artifact="ignored",
+            ),
         )
     )
 
     assert execution.messages == []
     assert [handoff.target_agent for handoff in execution.handoffs] == [
-        AgentRole.USER_RESEARCHER
+        AgentRole.COORDINATOR
     ]
-    assert "retention_next_step_demo" in execution.handoffs[0].reason
+    demo_payload = parse_demo_handoff(execution.handoffs[0].reason)
+    assert demo_payload is not None
+    assert demo_payload.stage == OPTIONS_SUMMARY_STAGE
+    assert demo_payload.artifact.startswith("1.")
 
 
 @pytest.mark.asyncio
@@ -308,6 +337,9 @@ async def test_product_manager_retention_handoff_does_not_publish_directly() -> 
     )
 
     assert execution.messages == []
+    assert [handoff.target_agent for handoff in execution.handoffs] == [
+        AgentRole.COORDINATOR
+    ]
     assert public_messages == []
 
 
@@ -328,18 +360,8 @@ async def test_product_manager_handler_asks_for_prototype_approval_after_deep_di
         WorkflowContext(
             thread_key="discord-thread-1",
             current_agent=AgentRole.PRODUCT_MANAGER,
-            user_message="Go deeper on option #1.",
-            transcript=(
-                AgentMessage(
-                    agent=AgentRole.PRODUCT_MANAGER,
-                    content=(
-                        "1. Improve onboarding checklists\n"
-                        "2. Add guided weekly habit loops\n"
-                        "3. Ship team-level retention nudges\n"
-                        "Which option should I deepen next: #1, #2, or #3?"
-                    ),
-                ),
-            ),
+            user_message="Draft the PRD for the selected option.",
+            transcript=(),
             trigger=DiscordTriggerContext(
                 discord_server_id="discord-server-1",
                 discord_user_id="user-1",
@@ -350,18 +372,28 @@ async def test_product_manager_handler_asks_for_prototype_approval_after_deep_di
                 dispatch_reason="reply_to_bot",
             ),
             toolset=AgentToolset(),
+            handoff_context=serialize_demo_handoff(
+                stage=PRD_BRIEF_STAGE,
+                artifact="Selected option: #1\nUser request: Go deeper on option #1.",
+            ),
         )
     )
 
-    assert execution.handoffs == []
-    assert len(execution.messages) == 1
-    reply = execution.messages[0].content
-    assert "prd for option #1" in reply.lower()
-    assert "prototype" in reply.lower()
+    assert execution.messages == []
+    assert [handoff.target_agent for handoff in execution.handoffs] == [
+        AgentRole.COORDINATOR
+    ]
+    demo_payload = parse_demo_handoff(execution.handoffs[0].reason)
+    assert demo_payload is not None
+    assert demo_payload.stage == PRD_READY_STAGE
+    assert "prd for option #1" in demo_payload.artifact.lower()
+    assert "prototype" in demo_payload.artifact.lower()
 
 
 @pytest.mark.asyncio
-async def test_product_manager_handler_persists_demo_prd_and_asks_for_prototype() -> None:
+async def test_product_manager_handler_persists_demo_prd_and_asks_for_prototype() -> (
+    None
+):
     saved_pages: list[dict[str, str]] = []
 
     async def _notion_update_content(page_title: str, content_updates: str) -> str:
@@ -403,18 +435,8 @@ async def test_product_manager_handler_persists_demo_prd_and_asks_for_prototype(
         WorkflowContext(
             thread_key="discord-thread-1",
             current_agent=AgentRole.PRODUCT_MANAGER,
-            user_message="Go deeper on option #2.",
-            transcript=(
-                AgentMessage(
-                    agent=AgentRole.PRODUCT_MANAGER,
-                    content=(
-                        "1. Improve onboarding checklists\n"
-                        "2. Add guided weekly habit loops\n"
-                        "3. Ship team-level retention nudges\n"
-                        "Which option should I deepen next: #1, #2, or #3?"
-                    ),
-                ),
-            ),
+            user_message="Draft the PRD for the selected option.",
+            transcript=(),
             trigger=DiscordTriggerContext(
                 discord_server_id="discord-server-1",
                 discord_user_id="user-1",
@@ -434,21 +456,73 @@ async def test_product_manager_handler_persists_demo_prd_and_asks_for_prototype(
                     ),
                 )
             ),
+            handoff_context=serialize_demo_handoff(
+                stage=PRD_BRIEF_STAGE,
+                artifact="Selected option: #2\nUser request: Go deeper on option #2.",
+            ),
         )
     )
 
     assert saved_pages
     assert "prd" in saved_pages[0]["page_title"].lower()
     assert "problem statement" in saved_pages[0]["content_updates"].lower()
-    assert execution.handoffs == []
-    assert len(execution.messages) == 1
-    reply = execution.messages[0].content
-    assert "https://www.notion.so/saved-prd-page" in reply
-    assert "prototype" in reply.lower()
+    assert execution.messages == []
+    assert [handoff.target_agent for handoff in execution.handoffs] == [
+        AgentRole.COORDINATOR
+    ]
+    demo_payload = parse_demo_handoff(execution.handoffs[0].reason)
+    assert demo_payload is not None
+    assert demo_payload.stage == PRD_READY_STAGE
+    assert "https://www.notion.so/saved-prd-page" in demo_payload.artifact
+    assert "prototype" in demo_payload.artifact.lower()
 
 
 @pytest.mark.asyncio
-async def test_product_manager_handler_handoffs_to_designer_on_prototype_approval() -> None:
+async def test_dispatcher_handler_handoffs_to_designer_on_prototype_approval() -> None:
+    handler = build_dispatcher_handler()
+
+    execution = await handler(
+        WorkflowContext(
+            thread_key="discord-thread-1",
+            current_agent=AgentRole.COORDINATOR,
+            user_message="sure",
+            transcript=(
+                AgentMessage(
+                    agent=AgentRole.COORDINATOR,
+                    content=(
+                        "PRD for option #2 ready: https://www.notion.so/prd-option-2\n"
+                        "Want me to spin up a quick clickable prototype for it next?"
+                    ),
+                ),
+            ),
+            trigger=DiscordTriggerContext(
+                discord_server_id="discord-server-1",
+                discord_user_id="user-1",
+                channel_id=10,
+                thread_id="discord-thread-1",
+                message_id=100,
+                thread_key="discord-thread-1",
+                dispatch_reason="reply_to_bot",
+            ),
+            toolset=AgentToolset(),
+        )
+    )
+
+    assert [message.agent for message in execution.messages] == [AgentRole.COORDINATOR]
+    assert execution.messages[0].content.lower() == "on it."
+    assert [handoff.target_agent for handoff in execution.handoffs] == [
+        AgentRole.PRODUCT_DESIGNER
+    ]
+    demo_payload = parse_demo_handoff(execution.handoffs[0].reason)
+    assert demo_payload is not None
+    assert demo_payload.stage == PROTOTYPE_BRIEF_STAGE
+    assert "https://www.notion.so/prd-option-2" in demo_payload.artifact
+
+
+@pytest.mark.asyncio
+async def test_product_manager_handler_handoffs_to_designer_on_prototype_approval() -> (
+    None
+):
     handler = build_product_manager_handler(
         model=_ToolCallingFakeListChatModel(responses=[""]),
     )
@@ -482,14 +556,14 @@ async def test_product_manager_handler_handoffs_to_designer_on_prototype_approva
 
     assert execution.messages == []
     assert [handoff.target_agent for handoff in execution.handoffs] == [
-        AgentRole.PRODUCT_DESIGNER
+        AgentRole.COORDINATOR
     ]
-    assert "retention_next_step_demo" in execution.handoffs[0].reason
-    assert "https://www.notion.so/prd-option-2" in execution.handoffs[0].reason
 
 
 @pytest.mark.asyncio
-async def test_product_designer_handler_publishes_demo_prototype_before_pm_handoff() -> None:
+async def test_product_designer_handler_publishes_demo_prototype_before_pm_handoff() -> (
+    None
+):
     tool_calls: list[dict[str, str | None]] = []
 
     async def _vercel_list_projects(team_name: str | None = None) -> str:
@@ -582,9 +656,11 @@ async def test_product_designer_handler_publishes_demo_prototype_before_pm_hando
     ]
     assert tool_calls[1]["project_name"] == "pixie-retention-demo"
     assert [handoff.target_agent for handoff in execution.handoffs] == [
-        AgentRole.PRODUCT_MANAGER
+        AgentRole.COORDINATOR
     ]
-    assert "https://pixie-retention-demo-eval.vercel.app" in execution.handoffs[0].reason
+    assert (
+        "https://pixie-retention-demo-eval.vercel.app" in execution.handoffs[0].reason
+    )
 
 
 def test_product_manager_prompt_spells_out_lenny_style_prd_sections() -> None:
@@ -623,7 +699,7 @@ async def test_product_manager_handler_emits_streamed_content_deltas() -> None:
         )
     )
 
-    assert "".join(streamed_chunks) == execution.messages[0].content
+    assert "".join(streamed_chunks) == execution.handoffs[0].reason
     assert streamed_chunks != []
 
 
@@ -654,10 +730,12 @@ async def test_user_researcher_handler_requires_notion_connection() -> None:
         )
     )
 
-    assert execution.handoffs == []
-    assert execution.messages[0].agent is AgentRole.USER_RESEARCHER
-    assert "notion" in execution.messages[0].content.lower()
-    assert "connect" in execution.messages[0].content.lower()
+    assert execution.messages == []
+    assert [handoff.target_agent for handoff in execution.handoffs] == [
+        AgentRole.COORDINATOR
+    ]
+    assert "notion" in execution.handoffs[0].reason.lower()
+    assert "connect" in execution.handoffs[0].reason.lower()
 
 
 @pytest.mark.asyncio
@@ -696,10 +774,12 @@ async def test_user_researcher_handler_reports_failed_notion_initialization() ->
         )
     )
 
-    assert execution.handoffs == []
-    assert execution.messages[0].agent is AgentRole.USER_RESEARCHER
-    assert "notion is connected" in execution.messages[0].content.lower()
-    assert "reconnect" in execution.messages[0].content.lower()
+    assert execution.messages == []
+    assert [handoff.target_agent for handoff in execution.handoffs] == [
+        AgentRole.COORDINATOR
+    ]
+    assert "notion is connected" in execution.handoffs[0].reason.lower()
+    assert "reconnect" in execution.handoffs[0].reason.lower()
 
 
 @pytest.mark.asyncio
@@ -743,10 +823,12 @@ async def test_user_researcher_handler_returns_deep_agent_response() -> None:
         )
     )
 
-    assert execution.handoffs == []
-    assert execution.messages[0].agent is AgentRole.USER_RESEARCHER
-    assert execution.messages[0].content.startswith("USER_RESEARCH_AGENT_OK")
-    assert "notion" in execution.messages[0].content.lower()
+    assert execution.messages == []
+    assert [handoff.target_agent for handoff in execution.handoffs] == [
+        AgentRole.COORDINATOR
+    ]
+    assert execution.handoffs[0].reason.startswith("USER_RESEARCH_AGENT_OK")
+    assert "notion" in execution.handoffs[0].reason.lower()
 
 
 @pytest.mark.asyncio
@@ -779,9 +861,11 @@ async def test_product_designer_handler_returns_deep_agent_response() -> None:
         )
     )
 
-    assert execution.handoffs == []
-    assert execution.messages[0].agent is AgentRole.PRODUCT_DESIGNER
-    assert execution.messages[0].content.startswith("PRODUCT_DESIGNER_OK")
+    assert execution.messages == []
+    assert [handoff.target_agent for handoff in execution.handoffs] == [
+        AgentRole.COORDINATOR
+    ]
+    assert execution.handoffs[0].reason.startswith("PRODUCT_DESIGNER_OK")
 
 
 @pytest.mark.asyncio
@@ -809,8 +893,12 @@ async def test_default_handlers_keep_placeholder_contract_for_unimplemented_role
         )
     )
 
-    assert execution.messages[0].content.startswith("E2E_PLACEHOLDER_OK")
-    assert "market analyst" in execution.messages[0].content.lower()
+    assert execution.messages == []
+    assert [handoff.target_agent for handoff in execution.handoffs] == [
+        AgentRole.COORDINATOR
+    ]
+    assert execution.handoffs[0].reason.startswith("E2E_PLACEHOLDER_OK")
+    assert "market analyst" in execution.handoffs[0].reason.lower()
 
 
 def test_default_handlers_include_user_researcher() -> None:

@@ -6,24 +6,33 @@ None. This scenario is centered on routing, artifact persistence, tool-use conte
 
 ## Agent evaluators
 
-| Evaluator name                                         | Criterion it covers                                                                     | Applies to | Source file              |
-| ------------------------------------------------------ | --------------------------------------------------------------------------------------- | ---------- | ------------------------ |
-| `pixie_qa/evaluators.py:research_artifact_quality`     | The researcher outcome is PM-ready, grounded, and concise.                              | All items  | `pixie_qa/evaluators.py` |
-| `pixie_qa/evaluators.py:first_turn_hypothesis_quality` | The first-turn PM outcome contains three distinct hypotheses with useful proposals.     | All items  | `pixie_qa/evaluators.py` |
-| `pixie_qa/evaluators.py:prd_tool_call_quality`         | The PM saves a real Lenny-style PRD through tool content instead of dumping it in chat. | All items  | `pixie_qa/evaluators.py` |
-| `pixie_qa/evaluators.py:prototype_handoff_quality`     | The deep-dive flow reaches design and yields a credible clickable-prototype handoff.    | All items  | `pixie_qa/evaluators.py` |
-| `pixie_qa/evaluators.py:conversational_quality`        | The visible thread stays conversational and summary-oriented rather than memo-like.     | All items  | `pixie_qa/evaluators.py` |
+None in the current version. The retention demo is scored entirely with mechanical evaluators because the contract is mostly about routing, tool usage, artifact persistence, and public-link surfacing.
 
 ## Manual custom evaluators (mechanical checks only)
 
-| Evaluator name                                            | Criterion it covers                                                                                   | Applies to | Source file              |
-| --------------------------------------------------------- | ----------------------------------------------------------------------------------------------------- | ---------- | ------------------------ |
-| `pixie_qa/evaluators.py:demo_handoff_contract`            | The two-turn scenario follows the required PM/researcher/designer handoff sequence.                   | All items  | `pixie_qa/evaluators.py` |
-| `pixie_qa/evaluators.py:three_hypotheses_shape`           | The first-turn reply structurally contains exactly three numbered options and a deepen-next question. | All items  | `pixie_qa/evaluators.py` |
-| `pixie_qa/evaluators.py:tool_persistence_contract`        | The run performs Notion reads, Notion write-back, and a Vercel deployment, including a PRD write.     | All items  | `pixie_qa/evaluators.py` |
-| `pixie_qa/evaluators.py:conversational_brevity_guardrail` | User-visible thread messages stay below the brevity thresholds and avoid plan-dump phrasing.          | All items  | `pixie_qa/evaluators.py` |
+1. `pixie_qa/evaluators.py:notion_write_with_substantive_body`
+   Criterion: the PM persists a substantive PRD to Notion through a real write tool.
+   Applies to: all items.
+2. `pixie_qa/evaluators.py:notion_link_surfaced_in_reply`
+   Criterion: the public PRD reply includes a usable Notion link.
+   Applies to: all items.
+3. `pixie_qa/evaluators.py:designer_handoff_occurred`
+   Criterion: the coordinator-led flow reaches the product designer after the prototype approval step.
+   Applies to: all items.
+4. `pixie_qa/evaluators.py:vercel_deployment_published`
+   Criterion: a Vercel deploy-capable tool is actually called.
+   Applies to: all items.
+5. `pixie_qa/evaluators.py:vercel_link_surfaced_in_reply`
+   Criterion: the final public reply includes a usable Vercel deployment URL.
+   Applies to: all items.
+6. `pixie_qa/evaluators.py:no_long_message_dump`
+   Criterion: all public replies stay under the message-length guardrail and avoid dumping long artifacts into chat.
+   Applies to: all items.
+7. `pixie_qa/evaluators.py:conversation_has_three_distinct_turns`
+   Criterion: the conversation follows the expected three-turn demo shape of options, PRD handoff, and prototype handoff.
+   Applies to: all items.
 
 ## Applicability summary
 
-- **Dataset-level defaults**: `pixie_qa/evaluators.py:demo_handoff_contract`, `pixie_qa/evaluators.py:three_hypotheses_shape`, `pixie_qa/evaluators.py:tool_persistence_contract`, `pixie_qa/evaluators.py:conversational_brevity_guardrail`, `pixie_qa/evaluators.py:research_artifact_quality`, `pixie_qa/evaluators.py:first_turn_hypothesis_quality`, `pixie_qa/evaluators.py:prd_tool_call_quality`, `pixie_qa/evaluators.py:prototype_handoff_quality`, `pixie_qa/evaluators.py:conversational_quality`
+- **Dataset-level defaults**: `pixie_qa/evaluators.py:notion_write_with_substantive_body`, `pixie_qa/evaluators.py:notion_link_surfaced_in_reply`, `pixie_qa/evaluators.py:designer_handoff_occurred`, `pixie_qa/evaluators.py:vercel_deployment_published`, `pixie_qa/evaluators.py:vercel_link_surfaced_in_reply`, `pixie_qa/evaluators.py:no_long_message_dump`, `pixie_qa/evaluators.py:conversation_has_three_distinct_turns`
 - **Item-specific**: none for this first version; every dataset item is the same retention demo workflow and should satisfy the same contract.

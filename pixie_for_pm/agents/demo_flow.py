@@ -42,6 +42,9 @@ _APPROVAL_PATTERN = re.compile(
 
 RESEARCH_BRIEF_STAGE = "research_brief"
 RESEARCH_FINDINGS_STAGE = "research_findings"
+OPTIONS_SUMMARY_STAGE = "options_summary"
+PRD_BRIEF_STAGE = "prd_brief"
+PRD_READY_STAGE = "prd_ready"
 PROTOTYPE_BRIEF_STAGE = "prototype_brief"
 PROTOTYPE_SUMMARY_STAGE = "prototype_summary"
 AWAITING_PROTOTYPE_APPROVAL_STAGE = "awaiting_prototype_approval"
@@ -131,6 +134,31 @@ def parse_prototype_approval(
     return _APPROVAL_PATTERN.search(text) is not None
 
 
+def parse_prd_request_option(
+    message: str,
+    *,
+    recent_reply: str | None,
+) -> int | None:
+    text = message.strip().casefold()
+    if text == "":
+        return None
+    if not any(keyword in text for keyword in ("prd", "mission", "vision")):
+        return None
+
+    bare_choice = parse_bare_option_choice(message, recent_pm_reply=recent_reply)
+    if bare_choice is not None:
+        return bare_choice
+
+    numeric_match = re.search(r"\b(?:option\s*)?#?([1-9])\b", text)
+    if numeric_match is not None:
+        return int(numeric_match.group(1))
+
+    for token, value in _ORDINAL_OPTIONS.items():
+        if re.search(rf"\b{re.escape(token)}\b", text):
+            return value
+    return None
+
+
 def _contains_any(haystack: str, needles: tuple[str, ...]) -> bool:
     return any(needle in haystack for needle in needles)
 
@@ -193,6 +221,9 @@ __all__ = [
     "AWAITING_PROTOTYPE_APPROVAL_STAGE",
     "BLOCKED_STATUS",
     "DemoHandoffPayload",
+    "OPTIONS_SUMMARY_STAGE",
+    "PRD_BRIEF_STAGE",
+    "PRD_READY_STAGE",
     "PROTOTYPE_BRIEF_STAGE",
     "PROTOTYPE_SUMMARY_STAGE",
     "READY_STATUS",
@@ -203,6 +234,7 @@ __all__ = [
     "parse_bare_option_choice",
     "parse_deep_dive_option",
     "parse_demo_handoff",
+    "parse_prd_request_option",
     "parse_prototype_approval",
     "serialize_demo_handoff",
 ]

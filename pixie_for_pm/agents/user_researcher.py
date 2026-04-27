@@ -3,8 +3,8 @@ from __future__ import annotations
 from collections.abc import Awaitable, Callable
 from dataclasses import replace
 
-from langchain_core.language_models.chat_models import BaseChatModel
 import pixie
+from langchain_core.language_models.chat_models import BaseChatModel
 
 from pixie_for_pm.agents.deep_agent import DEFAULT_DEEP_AGENT_MODEL, run_deep_agent
 from pixie_for_pm.agents.demo_flow import (
@@ -17,7 +17,6 @@ from pixie_for_pm.agents.demo_flow import (
 from pixie_for_pm.domain.models import (
     AgentExecution,
     AgentHandoff,
-    AgentMessage,
     AgentRole,
     WorkflowContext,
 )
@@ -105,12 +104,14 @@ def build_user_researcher_handler(
             execution_context_builder=_build_execution_context,
         )
         return AgentExecution(
-            messages=[
-                AgentMessage(
-                    agent=AgentRole.USER_RESEARCHER,
-                    content=content,
+            messages=[],
+            handoffs=[
+                AgentHandoff(
+                    source_agent=AgentRole.USER_RESEARCHER,
+                    target_agent=AgentRole.COORDINATOR,
+                    reason=content,
                 )
-            ]
+            ],
         )
 
     return _handler
@@ -140,7 +141,7 @@ async def _handle_demo_research_brief(
             handoffs=[
                 AgentHandoff(
                     source_agent=AgentRole.USER_RESEARCHER,
-                    target_agent=AgentRole.PRODUCT_MANAGER,
+                    target_agent=AgentRole.COORDINATOR,
                     reason=serialize_demo_handoff(
                         stage=RESEARCH_FINDINGS_STAGE,
                         status=BLOCKED_STATUS,
@@ -173,7 +174,7 @@ async def _handle_demo_research_brief(
         handoffs=[
             AgentHandoff(
                 source_agent=AgentRole.USER_RESEARCHER,
-                target_agent=AgentRole.PRODUCT_MANAGER,
+                target_agent=AgentRole.COORDINATOR,
                 reason=serialize_demo_handoff(
                     stage=RESEARCH_FINDINGS_STAGE,
                     artifact=findings,
@@ -191,31 +192,35 @@ def _require_notion_integration(context: WorkflowContext) -> AgentExecution | No
     notion_failure = _find_notion_failure(context)
     if notion_failure is not None:
         return AgentExecution(
-            messages=[
-                AgentMessage(
-                    agent=AgentRole.USER_RESEARCHER,
-                    content=(
+            messages=[],
+            handoffs=[
+                AgentHandoff(
+                    source_agent=AgentRole.USER_RESEARCHER,
+                    target_agent=AgentRole.COORDINATOR,
+                    reason=(
                         "Notion is connected for this server, but Pixie couldn't "
                         "initialize the Notion tools. The current authorization may be "
                         "invalid or expired. Reconnect Notion and try again. "
                         f"Initialization error: {notion_failure.error}"
                     ),
                 )
-            ]
+            ],
         )
 
     return AgentExecution(
-        messages=[
-            AgentMessage(
-                agent=AgentRole.USER_RESEARCHER,
-                content=(
+        messages=[],
+        handoffs=[
+            AgentHandoff(
+                source_agent=AgentRole.USER_RESEARCHER,
+                target_agent=AgentRole.COORDINATOR,
+                reason=(
                     "Connect Notion for this server before running the user researcher. "
                     "This workflow reads product context, methodology, interview "
                     "materials, and prior learnings from Notion, then writes tagging "
                     "artifacts and the final synthesis back there."
                 ),
             )
-        ]
+        ],
     )
 
 

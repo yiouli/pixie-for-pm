@@ -10,21 +10,17 @@ from langchain_core.tools import BaseTool
 from pixie_for_pm.agents.deep_agent import DEFAULT_DEEP_AGENT_MODEL, run_deep_agent
 from pixie_for_pm.agents.demo_flow import (
     BLOCKED_STATUS,
-    PROTOTYPE_BRIEF_STAGE,
-    PROTOTYPE_SUMMARY_STAGE,
+    OPTIONS_SUMMARY_STAGE,
+    PRD_BRIEF_STAGE,
+    PRD_READY_STAGE,
     RESEARCH_BRIEF_STAGE,
     RESEARCH_FINDINGS_STAGE,
-    is_retention_next_step_demo,
-    parse_bare_option_choice,
-    parse_deep_dive_option,
     parse_demo_handoff,
-    parse_prototype_approval,
     serialize_demo_handoff,
 )
 from pixie_for_pm.domain.models import (
     AgentExecution,
     AgentHandoff,
-    AgentMessage,
     AgentRole,
     WorkflowContext,
 )
@@ -39,6 +35,9 @@ Respond like a senior PM working inside a cross-functional product team.
 Be concrete, concise, and execution-oriented.
 Use any connected tools when they materially improve the answer.
 When you reference prior internal context, synthesize it instead of repeating it verbatim.
+Your scope is JTBD analysis plus drafting mission, vision, and PRD artifacts.
+Do not decide which specialist should work next and do not speak directly to the user.
+Return artifacts for the coordinator to present.
 
 When the work requires a PRD, write a Lenny Rachitsky-style PRD.
 Spell the structure out explicitly with:
@@ -57,14 +56,11 @@ Spell the structure out explicitly with:
 - risks and open questions
 
 For the retention-next-step demo workflow:
-- if the user says retention is low and asks what to build next,
-  delegate to the user researcher first
-- after the researcher returns, synthesize exactly three distinct hypotheses,
-    include a high-level proposal for each, and ask which option to deepen
-- if the user asks to go deeper on a numbered option, draft the PRD
-    internally first, then hand it to the product designer for a clickable
-    Vercel prototype, then return with a concise review-ready summary
-    for the user
+- when the coordinator passes research findings, synthesize exactly three
+    distinct hypotheses with a high-level proposal for each
+- when the coordinator passes a selected option, draft the PRD internally
+- if the coordinator passes mission or vision work, return a concrete artifact
+    instead of a conversational reply
 """.strip()
 
 _NUMBERED_BLOCK_PATTERN = re.compile(r"(?ms)^\s*(\d+)\.\s*(.+?)(?=^\s*\d+\.|\Z)")
@@ -88,93 +84,62 @@ def build_product_manager_handler(
                     model=model,
                     openai_api_key=openai_api_key,
                 )
-            if demo_payload.stage == PROTOTYPE_SUMMARY_STAGE:
-                return await _respond_to_prototype_summary(
-                    context,
-                    summary=demo_payload.artifact,
-                    status=demo_payload.status,
+            if demo_payload.stage == PRD_BRIEF_STAGE:
+                deep_dive_option = _parse_prd_brief_option(demo_payload.artifact)
+                prd = await run_deep_agent(
+                    role=AgentRole.PRODUCT_MANAGER,
+                    agent_name=PRODUCT_MANAGER_AGENT_NAME,
+                    system_prompt=PRODUCT_MANAGER_SYSTEM_PROMPT,
+                    context=_without_response_stream(context),
                     model=model,
                     openai_api_key=openai_api_key,
+                    execution_context_builder=lambda current_context: _build_prd_context(
+                        current_context,
+                        option_number=deep_dive_option,
+                    ),
+                )
+                notion_persist = await _persist_prd_artifact(
+                    context,
+                    option_number=deep_dive_option,
+                    prd=prd,
+                )
+                pixie.wrap(
+                    prd,
+                    purpose="state",
+                    name="prd_artifact",
+                    description=(
+                        "PRD drafted internally by the PM before asking the user "
+                        "whether to spin up a prototype."
+                    ),
+                )
+                persisted, page_url = notion_persist
+                reply = _build_prd_reply(
+                    persisted=persisted,
+                    page_url=page_url,
+                    option_number=deep_dive_option,
+                )
+                return AgentExecution(
+                    messages=[],
+                    handoffs=[
+                        AgentHandoff(
+                            source_agent=AgentRole.PRODUCT_MANAGER,
+                            target_agent=AgentRole.COORDINATOR,
+                            reason=serialize_demo_handoff(
+                                stage=PRD_READY_STAGE,
+                                artifact=reply,
+                            ),
+                        )
+                    ],
                 )
 
-        if is_retention_next_step_demo(context.user_message):
+        if demo_payload is not None and demo_payload.stage == RESEARCH_BRIEF_STAGE:
             return AgentExecution(
                 messages=[],
                 handoffs=[
                     AgentHandoff(
                         source_agent=AgentRole.PRODUCT_MANAGER,
-                        target_agent=AgentRole.USER_RESEARCHER,
-                        reason=serialize_demo_handoff(
-                            stage=RESEARCH_BRIEF_STAGE,
-                            artifact=_build_research_brief(context),
-                        ),
-                    )
-                ],
-            )
-
-        recent_pm_reply = _extract_recent_pm_reply(context)
-
-        # Approval to spin up a prototype after the PM offered one.
-        if parse_prototype_approval(context.user_message, recent_pm_reply=recent_pm_reply):
-            brief = _build_designer_brief_from_history(context, recent_pm_reply)
-            return AgentExecution(
-                messages=[],
-                handoffs=[
-                    AgentHandoff(
-                        source_agent=AgentRole.PRODUCT_MANAGER,
-                        target_agent=AgentRole.PRODUCT_DESIGNER,
-                        reason=serialize_demo_handoff(
-                            stage=PROTOTYPE_BRIEF_STAGE,
-                            artifact=brief,
-                        ),
-                    )
-                ],
-            )
-
-        deep_dive_option = parse_deep_dive_option(context.user_message)
-        if deep_dive_option is None:
-            deep_dive_option = parse_bare_option_choice(
-                context.user_message,
-                recent_pm_reply=recent_pm_reply,
-            )
-        if deep_dive_option is not None:
-            prd = await run_deep_agent(
-                role=AgentRole.PRODUCT_MANAGER,
-                agent_name=PRODUCT_MANAGER_AGENT_NAME,
-                system_prompt=PRODUCT_MANAGER_SYSTEM_PROMPT,
-                context=_without_response_stream(context),
-                model=model,
-                openai_api_key=openai_api_key,
-                execution_context_builder=lambda current_context: _build_prd_context(
-                    current_context,
-                    option_number=deep_dive_option,
-                ),
-            )
-            notion_persist = await _persist_prd_artifact(
-                context,
-                option_number=deep_dive_option,
-                prd=prd,
-            )
-            pixie.wrap(
-                prd,
-                purpose="state",
-                name="prd_artifact",
-                description=(
-                    "PRD drafted internally by the PM before asking the user "
-                    "whether to spin up a prototype."
-                ),
-            )
-            persisted, page_url = notion_persist
-            reply = _build_prd_reply(
-                persisted=persisted,
-                page_url=page_url,
-                option_number=deep_dive_option,
-            )
-            return AgentExecution(
-                messages=[
-                    AgentMessage(
-                        agent=AgentRole.PRODUCT_MANAGER,
-                        content=reply,
+                        target_agent=AgentRole.COORDINATOR,
+                        reason=demo_payload.artifact,
                     )
                 ],
             )
@@ -189,12 +154,14 @@ def build_product_manager_handler(
             execution_context_builder=_build_default_execution_context,
         )
         return AgentExecution(
-            messages=[
-                AgentMessage(
-                    agent=AgentRole.PRODUCT_MANAGER,
-                    content=content,
+            messages=[],
+            handoffs=[
+                AgentHandoff(
+                    source_agent=AgentRole.PRODUCT_MANAGER,
+                    target_agent=AgentRole.COORDINATOR,
+                    reason=content,
                 )
-            ]
+            ],
         )
 
     return _handler
@@ -210,12 +177,14 @@ async def _respond_to_research_findings(
 ) -> AgentExecution:
     if status == BLOCKED_STATUS:
         return AgentExecution(
-            messages=[
-                AgentMessage(
-                    agent=AgentRole.PRODUCT_MANAGER,
-                    content=findings,
+            messages=[],
+            handoffs=[
+                AgentHandoff(
+                    source_agent=AgentRole.PRODUCT_MANAGER,
+                    target_agent=AgentRole.COORDINATOR,
+                    reason=findings,
                 )
-            ]
+            ],
         )
 
     content = await run_deep_agent(
@@ -232,12 +201,17 @@ async def _respond_to_research_findings(
     )
     content = _compact_hypothesis_reply(content)
     return AgentExecution(
-        messages=[
-            AgentMessage(
-                agent=AgentRole.PRODUCT_MANAGER,
-                content=content,
+        messages=[],
+        handoffs=[
+            AgentHandoff(
+                source_agent=AgentRole.PRODUCT_MANAGER,
+                target_agent=AgentRole.COORDINATOR,
+                reason=serialize_demo_handoff(
+                    stage=OPTIONS_SUMMARY_STAGE,
+                    artifact=content,
+                ),
             )
-        ]
+        ],
     )
 
 
@@ -249,23 +223,28 @@ async def _respond_to_prototype_summary(
     model: str | BaseChatModel,
     openai_api_key: str | None,
 ) -> AgentExecution:
+    del context, model, openai_api_key
     if status == BLOCKED_STATUS:
         return AgentExecution(
-            messages=[
-                AgentMessage(
-                    agent=AgentRole.PRODUCT_MANAGER,
-                    content=summary,
+            messages=[],
+            handoffs=[
+                AgentHandoff(
+                    source_agent=AgentRole.PRODUCT_MANAGER,
+                    target_agent=AgentRole.COORDINATOR,
+                    reason=summary,
                 )
-            ]
+            ],
         )
 
     return AgentExecution(
-        messages=[
-            AgentMessage(
-                agent=AgentRole.PRODUCT_MANAGER,
-                content=_build_prototype_review_reply(summary),
+        messages=[],
+        handoffs=[
+            AgentHandoff(
+                source_agent=AgentRole.PRODUCT_MANAGER,
+                target_agent=AgentRole.COORDINATOR,
+                reason=_build_prototype_review_reply(summary),
             )
-        ]
+        ],
     )
 
 
@@ -279,6 +258,13 @@ def _build_default_execution_context(context: WorkflowContext) -> str:
             _describe_integrations(context),
         )
     )
+
+
+def _parse_prd_brief_option(brief: str) -> int:
+    match = re.search(r"Selected option:\s*#?(\d+)", brief)
+    if match is None:
+        return 1
+    return int(match.group(1))
 
 
 def _build_research_brief(context: WorkflowContext) -> str:
@@ -452,15 +438,17 @@ def _extract_recent_pm_reply(context: WorkflowContext) -> str | None:
     return None
 
 
-def _build_prd_reply(*, persisted: bool, page_url: str | None, option_number: int) -> str:
+def _build_prd_reply(
+    *, persisted: bool, page_url: str | None, option_number: int
+) -> str:
     if page_url is not None:
         prd_line = f"PRD for option #{option_number} ready: {page_url}"
     elif persisted:
-        prd_line = f"PRD for option #{option_number} saved to Notion (page link not returned)."
-    else:
         prd_line = (
-            f"PRD for option #{option_number} drafted internally (Notion write was not available)."
+            f"PRD for option #{option_number} saved to Notion (page link not returned)."
         )
+    else:
+        prd_line = f"PRD for option #{option_number} drafted internally (Notion write was not available)."
     return f"{prd_line}\nWant me to spin up a quick clickable prototype for it next?"
 
 
@@ -483,7 +471,9 @@ def _build_designer_brief_from_history(
             "it into a clickable Vercel prototype."
         )
     else:
-        lines.append("Use the prior PM message in this conversation as the PRD reference.")
+        lines.append(
+            "Use the prior PM message in this conversation as the PRD reference."
+        )
 
     if recent_pm_reply is not None:
         lines.append("")
@@ -561,7 +551,9 @@ def _compact_option_block(block: str) -> str:
     body = " ".join(part for part in (inline_body, *lines[1:]) if part)
     idea = _extract_labeled_fragment(body, (r"Idea",)) or _first_sentence(body)
     why = _extract_labeled_fragment(body, (r"Why(?: it should improve retention)?",))
-    proposal = _extract_labeled_fragment(body, (r"High-level proposal", r"Proposal")) or idea
+    proposal = (
+        _extract_labeled_fragment(body, (r"High-level proposal", r"Proposal")) or idea
+    )
 
     return " ".join(
         fragment
@@ -579,9 +571,7 @@ def _build_prototype_review_reply(summary: str) -> str:
     url = _extract_url(summary)
     prototype_summary = _extract_prefixed_line(summary, "Prototype summary:")
     if prototype_summary is None:
-        prototype_summary = (
-            "The concept turns the selected retention idea into a lighter weekly prep loop."
-        )
+        prototype_summary = "The concept turns the selected retention idea into a lighter weekly prep loop."
 
     lines = []
     if url is not None:
@@ -604,7 +594,9 @@ def _split_option_title(line: str) -> tuple[str, str]:
 
 def _extract_labeled_fragment(text: str, labels: tuple[str, ...]) -> str | None:
     label_pattern = "|".join(labels)
-    all_labels = r"Idea|Why(?: it should improve retention)?|High-level proposal|Proposal"
+    all_labels = (
+        r"Idea|Why(?: it should improve retention)?|High-level proposal|Proposal"
+    )
     match = re.search(
         rf"(?:{label_pattern}):\s*(.+?)(?=(?:{all_labels}):|$)",
         text,

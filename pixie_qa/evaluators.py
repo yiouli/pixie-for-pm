@@ -63,7 +63,9 @@ def _word_count(text: str) -> int:
     return len(re.findall(r"\b\w+\b", text))
 
 
-_NOTION_LINK = re.compile(r"https?://(?:www\.)?notion\.(?:so|site)/[^\s)>\]]+", re.IGNORECASE)
+_NOTION_LINK = re.compile(
+    r"https?://(?:www\.)?notion\.(?:so|site)/[^\s)>\]]+", re.IGNORECASE
+)
 _VERCEL_LINK = re.compile(r"https?://[^\s)>\]]*vercel\.app[^\s)>\]]*", re.IGNORECASE)
 
 
@@ -164,7 +166,11 @@ def notion_write_with_substantive_body(evaluable: Evaluable) -> Evaluation:
     ]
     if not write_calls:
         observed = sorted(
-            {tool for r in _tool_args(evaluable) if isinstance((tool := r.get("tool")), str)}
+            {
+                tool
+                for r in _tool_args(evaluable)
+                if isinstance((tool := r.get("tool")), str)
+            }
         )
         return Evaluation(
             score=0.0,
@@ -232,7 +238,8 @@ def designer_handoff_occurred(evaluable: Evaluable) -> Evaluation:
     pairs = [
         (h.get("source_agent"), h.get("target_agent"))
         for h in handoffs
-        if isinstance(h.get("source_agent"), str) and isinstance(h.get("target_agent"), str)
+        if isinstance(h.get("source_agent"), str)
+        and isinstance(h.get("target_agent"), str)
     ]
     if any(target == "product_designer" for _, target in pairs):
         return Evaluation(
@@ -270,7 +277,7 @@ def vercel_deployment_published(evaluable: Evaluable) -> Evaluation:
 
 
 def vercel_link_surfaced_in_reply(evaluable: Evaluable) -> Evaluation:
-    """The PM's final reply must include the Vercel deployment URL."""
+    """A final public reply must include the Vercel deployment URL."""
     replies = _public_replies(evaluable)
     if not replies:
         return Evaluation(score=0.0, reasoning="No public replies captured.")
@@ -280,7 +287,7 @@ def vercel_link_surfaced_in_reply(evaluable: Evaluable) -> Evaluation:
         return Evaluation(
             score=0.0,
             reasoning=(
-                "No public reply contained a Vercel URL. The PM should surface the "
+                "No public reply contained a Vercel URL. The coordinator should surface the "
                 "deployed prototype link to the user."
             ),
         )
@@ -297,7 +304,9 @@ def no_long_message_dump(evaluable: Evaluable) -> Evaluation:
     if not replies:
         return Evaluation(score=0.0, reasoning="No public replies captured.")
 
-    over_limit = [(name, _word_count(text)) for name, text in replies if _word_count(text) > limit]
+    over_limit = [
+        (name, _word_count(text)) for name, text in replies if _word_count(text) > limit
+    ]
     if over_limit:
         details = ", ".join(f"{name}={count}w" for name, count in over_limit)
         return Evaluation(
@@ -316,9 +325,9 @@ def no_long_message_dump(evaluable: Evaluable) -> Evaluation:
 def conversation_has_three_distinct_turns(evaluable: Evaluable) -> Evaluation:
     """The bot should produce three distinct conversational turns:
 
-    1. PM presents 3 options after research.
-    2. PM saves PRD to Notion and asks if user wants a prototype.
-    3. PM returns the deployed Vercel link after the designer publishes.
+    1. Coordinator presents 3 options after the research and PM passes complete.
+    2. Coordinator shares the saved PRD link and asks if the user wants a prototype.
+    3. Coordinator returns the deployed Vercel link after the designer publishes.
     """
     replies = _public_replies(evaluable)
     if len(replies) < 3:
@@ -334,7 +343,9 @@ def conversation_has_three_distinct_turns(evaluable: Evaluable) -> Evaluation:
     if not re.search(r"(?m)^\s*[123][\.\)]\s", first):
         return Evaluation(
             score=0.0,
-            reasoning=(f"First turn ({replies[0][0]}) did not present numbered options."),
+            reasoning=(
+                f"First turn ({replies[0][0]}) did not present numbered options."
+            ),
         )
 
     second_text = replies[1][1]
@@ -365,7 +376,9 @@ def conversation_has_three_distinct_turns(evaluable: Evaluable) -> Evaluation:
     if not _VERCEL_LINK.search(third_text):
         return Evaluation(
             score=0.0,
-            reasoning=(f"Third turn ({replies[2][0]}) did not include a Vercel prototype URL."),
+            reasoning=(
+                f"Third turn ({replies[2][0]}) did not include a Vercel prototype URL."
+            ),
         )
 
     return Evaluation(

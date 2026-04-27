@@ -172,7 +172,7 @@ def _agent_node(
 
 
 def _route_current_agent(state: WorkflowState) -> Literal[
-    "dispatcher",
+    "coordinator",
     "product_manager",
     "market_analyst",
     "user_researcher",
@@ -180,7 +180,7 @@ def _route_current_agent(state: WorkflowState) -> Literal[
 ]:
     return cast(
         Literal[
-            "dispatcher",
+            "coordinator",
             "product_manager",
             "market_analyst",
             "user_researcher",
@@ -194,8 +194,14 @@ def _validate_handoffs(role: AgentRole, handoffs: list[AgentHandoff]) -> None:
     for handoff in handoffs:
         if handoff.source_agent is not role:
             raise ValueError("Agent handoff source must match the current agent.")
-        if handoff.target_agent is AgentRole.DISPATCHER:
-            raise ValueError("Agents cannot hand off work back to dispatcher.")
+        if role is AgentRole.COORDINATOR:
+            if handoff.target_agent is AgentRole.COORDINATOR:
+                raise ValueError("Coordinator cannot hand off work to coordinator.")
+            continue
+        if handoff.target_agent is not AgentRole.COORDINATOR:
+            raise ValueError(
+                "Only the coordinator can hand off work to another specialist."
+            )
 
 
 def _route_after_agent(state: WorkflowState) -> str:

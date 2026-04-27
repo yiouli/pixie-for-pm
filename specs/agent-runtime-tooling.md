@@ -106,8 +106,14 @@ For message-triggered turns, the Discord adapter should:
 
 1. react to the triggering message with `:eyes:` before starting the agent loop
 2. create a single placeholder reply in the eventual response location
-3. edit that same reply as the orchestrator emits status updates such as `Thinking`, provider fetches, and handoffs while relying on Discord's native typing indicator instead of a literal `Typing...` message state
+3. edit that same reply as the orchestrator emits status updates such as `Thinking`, provider fetches, coordinator acknowledgements, and internal handoffs while relying on Discord's native typing indicator instead of a literal `Typing...` message state
 4. replace the placeholder content with the final public transcript once the turn completes
+
+## Coordinator Contract
+
+- The coordinator is the only agent allowed to decide the next handoff destination.
+- Non-coordinator agents return artifacts or blockers through private handoff context instead of producing public Discord messages.
+- The runtime may therefore emit extra status updates when work returns to the coordinator for another routing decision inside the same turn.
 
 ## Code Changes
 
