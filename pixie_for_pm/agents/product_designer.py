@@ -264,10 +264,9 @@ async def _publish_demo_prototype(
         deploy_tool,
         {
             "project_name": project_name,
-            "deployment_summary": _deployment_summary(
-                summary,
-                project_name=project_name,
-            ),
+            "deployment_summary": _deployment_summary(summary),
+            "files": _build_prototype_files(summary=summary, project_name=project_name),
+            "target": "production",
         },
     )
     result = await deploy_tool.ainvoke(payload)
@@ -319,9 +318,41 @@ def _deployment_summary(summary: str, *, project_name: str) -> str:
     )
 
 
-def _build_demo_project_name(context: WorkflowContext) -> str:
-    slug = re.sub(r"[^a-z0-9]+", "-", context.thread_key.casefold()).strip("-")
-    if slug == "":
+def _build_prototype_files(*, summary: str, project_name: str) -> dict[str, str]:
+    """Build the minimal static prototype files uploaded with each Vercel deployment.
+
+    The deployment tool requires inline file content. We render a single
+    ``index.html`` that surfaces the prototype summary so reviewers landing on
+    the deployment URL see the same product framing the PM received.
+    """
+    title = _escape_html(project_name)
+    body = _escape_html(_clean_text(summary)) or _escape_html(project_name)
+    html = (
+        "<!doctype html>\n"
+        '<html lang="en">\n'
+        "<head>\n"
+        '<meta charset="utf-8">\n'
+        f"<title>{title}</title>\n"
+        "</head>\n"
+        "<body>\n"
+        f"<main><h1>{title}</h1><p>{body}</p></main>\n"
+        "</body>\n"
+        "</html>\n"
+    )
+    return {"index.html": html}
+
+
+def _escape_html(text: str) -> str:
+    return (
+        text.replace("&", "&amp;")
+        .replace("<", "&lt;")
+        .replace(">", "&gt;")
+        .replace('"', "&quot;")
+    )
+
+
+def _pick_project_name(project_listing: str | None) -> str:
+    if project_listing is None:
         return "pixie-retention-demo"
     return f"pixie-retention-demo-{slug}"
 

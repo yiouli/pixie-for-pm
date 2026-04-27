@@ -11,6 +11,7 @@ from pixie_for_pm.integrations.runtime_providers import (
     AirtableToolProvider,
     FirefliesToolProvider,
     HostedMcpToolProvider,
+    VercelToolProvider,
 )
 from pixie_for_pm.integrations.toolset import DiscordTriggerContext
 
@@ -40,11 +41,6 @@ def _trigger() -> DiscordTriggerContext:
             "github",
             "https://api.githubcopilot.com/mcp/",
             {"access_token": "github-token"},
-        ),
-        (
-            "vercel",
-            "https://mcp.vercel.com",
-            {"access_token": "vercel-token"},
         ),
     ],
 )
@@ -242,7 +238,7 @@ async def test_hosted_mcp_provider_requires_reconnect_for_legacy_unauthorized_to
         **kwargs: object,
     ) -> list[StructuredTool]:
         del session, kwargs
-        request = httpx.Request("POST", "https://mcp.vercel.com")
+        request = httpx.Request("POST", "https://mcp.notion.com/mcp")
         response = httpx.Response(401, request=request)
         raise httpx.HTTPStatusError(
             "401 Unauthorized",
@@ -251,16 +247,16 @@ async def test_hosted_mcp_provider_requires_reconnect_for_legacy_unauthorized_to
         )
 
     provider = HostedMcpToolProvider(
-        provider_id="vercel",
-        server_url="https://mcp.vercel.com",
+        provider_id="notion",
+        server_url="https://mcp.notion.com/mcp",
         token_field="access_token",
         tool_loader=_loader,
         token_refresher=lambda credentials: pytest.fail(str(credentials)),
     )
 
-    with pytest.raises(RuntimeError, match="Reconnect Vercel"):
+    with pytest.raises(RuntimeError, match="Reconnect Notion"):
         await provider.load_tools(
-            credentials={"access_token": "legacy-vercel-token"},
+            credentials={"access_token": "legacy-notion-token"},
             trigger=_trigger(),
         )
 
@@ -396,3 +392,172 @@ async def test_fireflies_provider_uses_live_graphql_api() -> None:
     assert results == [
         {"id": "tr-1", "title": "Roadmap Review", "transcript_url": "https://ff/1"}
     ]
+
+
+def _vercel_trigger() -> DiscordTriggerContext:
+    return _trigger()
+
+
+@pytest.mark.asyncio
+async def test_vercel_tool_provider_lists_projects_with_bearer_token() -> None:
+    captured: dict[str, object] = {}
+
+    def _handler(request: httpx.Request) -> httpx.Response:
+        captured["method"] = request.method
+        captured["url"] = str(request.url)
+        captured["authorization"] = request.headers.get("Authorization")
+        return httpx.Response(
+            200, json={"projects": [{"name": "pixie-retention-demo"}]}
+        )
+
+    provider = VercelToolProvider(transport=httpx.MockTransport(_handler))
+    tools = await provider.load_tools(
+        credentials={"access_token": "vercel-token"},
+        trigger=_vercel_trigger(),
+    )
+    list_tool = next(t for t in tools if t.name == "vercel_list_projects")
+
+    result = await list_tool.ainvoke({})
+
+    assert result == [{"name": "pixie-retention-demo"}]
+    assert captured["method"] == "GET"
+    assert captured["url"] == "https://api.vercel.com/v9/projects"
+    assert captured["authorization"] == "Bearer vercel-token"
+
+
+@pytest.mark.asyncio
+async def test_vercel_tool_provider_lists_projects_passes_team_id_query_param() -> None:
+    captured: dict[str, object] = {}
+
+    def _handler(request: httpx.Request) -> httpx.Response:
+        captured["url"] = str(request.url)
+        return httpx.Response(200, json={"projects": []})
+
+    provider = VercelToolProvider(transport=httpx.MockTransport(_handler))
+    tools = await provider.load_tools(
+        credentials={"access_token": "vercel-token"},
+        trigger=_vercel_trigger(),
+    )
+    list_tool = next(t for t in tools if t.name == "vercel_list_projects")
+
+    await list_tool.ainvoke({"team_id": "team_42"})
+
+    assert captured["url"] == "https://api.vercel.com/v9/projects?teamId=team_42"
+
+
+@pytest.mark.asyncio
+async def test_vercel_tool_provider_creates_project_via_rest() -> None:
+    captured: dict[str, object] = {}
+
+    def _handler(request: httpx.Request) -> httpx.Response:
+        captured["method"] = request.method
+        captured["url"] = str(request.url)
+        captured["body"] = json.loads(request.content.decode())
+        return httpx.Response(200, json={"id": "prj_1", "name": "pixie-retention"})
+
+    provider = VercelToolProvider(transport=httpx.MockTransport(_handler))
+    tools = await provider.load_tools(
+        credentials={"access_token": "vercel-token"},
+        trigger=_vercel_trigger(),
+    )
+    create_tool = next(t for t in tools if t.name == "vercel_create_project")
+
+    result = await create_tool.ainvoke(
+        {"name": "pixie-retention", "framework": "nextjs"}
+    )
+
+    assert result == {"id": "prj_1", "name": "pixie-retention"}
+    assert captured["method"] == "POST"
+    assert captured["url"] == "https://api.vercel.com/v10/projects"
+    assert captured["body"] == {"name": "pixie-retention", "framework": "nextjs"}
+
+
+@pytest.mark.asyncio
+async def test_vercel_tool_provider_create_deployment_uploads_inline_files() -> None:
+    captured: dict[str, object] = {}
+
+    def _handler(request: httpx.Request) -> httpx.Response:
+        captured["method"] = request.method
+        captured["url"] = str(request.url)
+        captured["body"] = json.loads(request.content.decode())
+        return httpx.Response(
+            200,
+            json={
+                "id": "dpl_1",
+                "url": "pixie-retention-demo-eval.vercel.app",
+                "alias": ["pixie-retention-demo.vercel.app"],
+            },
+        )
+
+    provider = VercelToolProvider(transport=httpx.MockTransport(_handler))
+    tools = await provider.load_tools(
+        credentials={"access_token": "vercel-token"},
+        trigger=_vercel_trigger(),
+    )
+    deploy_tool = next(t for t in tools if t.name == "vercel_create_deployment")
+
+    result = await deploy_tool.ainvoke(
+        {
+            "project_name": "pixie-retention-demo",
+            "files": {"index.html": "<!doctype html><title>x</title>"},
+        }
+    )
+
+    assert isinstance(result, dict)
+    assert result["url"] == "https://pixie-retention-demo-eval.vercel.app"
+    assert result["alias"] == ["https://pixie-retention-demo.vercel.app"]
+    assert captured["method"] == "POST"
+    assert captured["url"] == "https://api.vercel.com/v13/deployments"
+    body = captured["body"]
+    assert isinstance(body, dict)
+    assert body["name"] == "pixie-retention-demo"
+    assert body["target"] == "production"
+    assert body["files"] == [
+        {"file": "index.html", "data": "<!doctype html><title>x</title>"}
+    ]
+
+
+@pytest.mark.asyncio
+async def test_vercel_tool_provider_rejects_deployment_without_files() -> None:
+    def _handler(request: httpx.Request) -> httpx.Response:
+        raise AssertionError(f"Unexpected HTTP request: {request.url}")
+
+    provider = VercelToolProvider(transport=httpx.MockTransport(_handler))
+    tools = await provider.load_tools(
+        credentials={"access_token": "vercel-token"},
+        trigger=_vercel_trigger(),
+    )
+    deploy_tool = next(t for t in tools if t.name == "vercel_create_deployment")
+
+    with pytest.raises(RuntimeError, match="at least one file"):
+        await deploy_tool.ainvoke({"project_name": "pixie-retention-demo", "files": {}})
+
+
+@pytest.mark.asyncio
+async def test_vercel_tool_provider_translates_http_errors_to_runtime_error() -> None:
+    def _handler(request: httpx.Request) -> httpx.Response:
+        del request
+        return httpx.Response(401, json={"error": {"message": "invalid token"}})
+
+    provider = VercelToolProvider(transport=httpx.MockTransport(_handler))
+    tools = await provider.load_tools(
+        credentials={"access_token": "bad-token"},
+        trigger=_vercel_trigger(),
+    )
+    list_tool = next(t for t in tools if t.name == "vercel_list_projects")
+
+    with pytest.raises(RuntimeError, match="Vercel request failed"):
+        await list_tool.ainvoke({})
+
+
+@pytest.mark.asyncio
+async def test_vercel_tool_provider_requires_access_token_in_credentials() -> None:
+    provider = VercelToolProvider()
+    tools = await provider.load_tools(
+        credentials={"access_token": ""},
+        trigger=_vercel_trigger(),
+    )
+    list_tool = next(t for t in tools if t.name == "vercel_list_projects")
+
+    with pytest.raises(RuntimeError, match="Missing access_token"):
+        await list_tool.ainvoke({})

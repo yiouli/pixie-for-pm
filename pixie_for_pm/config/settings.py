@@ -83,7 +83,7 @@ def _optional_int(env: dict[str, str], key: str) -> int | None:
 
 
 def _load_oauth_values(env: dict[str, str], suffix: str) -> dict[str, str]:
-    providers = ("NOTION", "GITHUB", "VERCEL", "AIRTABLE")
+    providers = ("NOTION", "GITHUB", "AIRTABLE")
     values: dict[str, str] = {}
     for provider in providers:
         value = _optional(env, f"{provider}_{suffix}")

@@ -36,10 +36,11 @@ PROVIDERS: dict[str, ProviderConfig] = {
     "vercel": ProviderConfig(
         id="vercel",
         name="Vercel",
-        auth_type="oauth2",
-        oauth_authorize_url="https://vercel.com/oauth/authorize",
-        oauth_token_url="https://api.vercel.com/login/oauth/token",
-        scopes=["read:projects", "read:deployments"],
+        auth_type="api_key",
+        api_key_fields=["access_token"],
+        api_key_help_url=(
+            "https://vercel.com/kb/guide/how-do-i-use-a-vercel-api-access-token"
+        ),
     ),
     "airtable": ProviderConfig(
         id="airtable",

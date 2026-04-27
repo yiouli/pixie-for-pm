@@ -16,7 +16,6 @@ from pixie_for_pm.integrations.toolset import (
 )
 from pixie_for_pm.web.providers.oauth import (
     refresh_notion_mcp_token,
-    refresh_vercel_mcp_token,
 )
 
 
@@ -36,6 +35,32 @@ class RecordQueryInput(BaseModel):
     base_id: str = Field(min_length=1)
     table_name: str = Field(min_length=1)
     formula: str | None = None
+
+
+class VercelListProjectsInput(BaseModel):
+    team_id: str | None = None
+
+
+class VercelCreateProjectInput(BaseModel):
+    name: str = Field(min_length=1)
+    framework: str | None = None
+    team_id: str | None = None
+
+
+class VercelCreateDeploymentInput(BaseModel):
+    project_name: str = Field(min_length=1)
+    files: dict[str, str] = Field(
+        description=(
+            "Mapping of file path (e.g. 'index.html') to UTF-8 text content for the "
+            "deployment. The first deployment to a new project name auto-creates the "
+            "project."
+        ),
+    )
+    target: str | None = Field(
+        default="production",
+        description="Deployment target ('production' or 'staging').",
+    )
+    team_id: str | None = None
 
 
 class McpToolLoader(Protocol):
@@ -240,6 +265,181 @@ class AirtableToolProvider(IntegrationRuntimeProvider):
         return _expect_dict(response.json(), "Airtable response")
 
 
+class VercelToolProvider(IntegrationRuntimeProvider):
+    """REST-API-backed Vercel runtime provider.
+
+    Authenticates with a personal Vercel access token (see
+    https://vercel.com/kb/guide/how-do-i-use-a-vercel-api-access-token) and
+    exposes only the tools needed to publish a clickable prototype: list
+    projects, create a project, and deploy inline files.
+    """
+
+    _API_BASE = "https://api.vercel.com"
+
+    def __init__(self, *, transport: httpx.AsyncBaseTransport | None = None) -> None:
+        self._transport = transport
+
+    async def load_tools(
+        self,
+        *,
+        credentials: Mapping[str, str],
+        trigger: DiscordTriggerContext,
+    ) -> tuple[BaseTool, ...]:
+        del trigger
+
+        async def _list_projects(team_id: str | None = None) -> object:
+            payload = await self._get_json(
+                "/v9/projects",
+                credentials=credentials,
+                team_id=team_id,
+            )
+            return payload.get("projects", [])
+
+        async def _create_project(
+            name: str,
+            framework: str | None = None,
+            team_id: str | None = None,
+        ) -> object:
+            body: dict[str, object] = {"name": name}
+            if framework is not None:
+                body["framework"] = framework
+            return await self._post_json(
+                "/v10/projects",
+                credentials=credentials,
+                body=body,
+                team_id=team_id,
+            )
+
+        async def _create_deployment(
+            project_name: str,
+            files: Mapping[str, str],
+            target: str | None = "production",
+            team_id: str | None = None,
+        ) -> object:
+            if not files:
+                raise RuntimeError(
+                    "vercel_create_deployment requires at least one file."
+                )
+            file_payload = [
+                {"file": path, "data": content} for path, content in files.items()
+            ]
+            body: dict[str, object] = {
+                "name": project_name,
+                "files": file_payload,
+                "projectSettings": {"framework": None},
+            }
+            if target is not None:
+                body["target"] = target
+            response = await self._post_json(
+                "/v13/deployments",
+                credentials=credentials,
+                body=body,
+                team_id=team_id,
+            )
+            url = response.get("url")
+            alias = response.get("alias")
+            if isinstance(url, str) and not url.startswith("http"):
+                response = {**response, "url": f"https://{url}"}
+            if isinstance(alias, list):
+                response = {
+                    **response,
+                    "alias": [
+                        _normalize_vercel_url(a) for a in alias if isinstance(a, str)
+                    ],
+                }
+            return response
+
+        return (
+            StructuredTool.from_function(
+                coroutine=_list_projects,
+                name="vercel_list_projects",
+                description=(
+                    "List Vercel projects available to the connected access token."
+                ),
+                args_schema=VercelListProjectsInput,
+            ),
+            StructuredTool.from_function(
+                coroutine=_create_project,
+                name="vercel_create_project",
+                description=(
+                    "Create a new Vercel project. Most prototypes can skip this and "
+                    "call vercel_create_deployment directly, which auto-creates the "
+                    "project on first deploy."
+                ),
+                args_schema=VercelCreateProjectInput,
+            ),
+            StructuredTool.from_function(
+                coroutine=_create_deployment,
+                name="vercel_create_deployment",
+                description=(
+                    "Create a new Vercel deployment by uploading inline files. "
+                    "Returns the deployment record including the live URL."
+                ),
+                args_schema=VercelCreateDeploymentInput,
+            ),
+        )
+
+    async def _get_json(
+        self,
+        path: str,
+        *,
+        credentials: Mapping[str, str],
+        team_id: str | None = None,
+    ) -> dict[str, object]:
+        token = self._require_token(credentials)
+        params = {"teamId": team_id} if team_id is not None else None
+        try:
+            async with httpx.AsyncClient(
+                transport=self._transport,
+                timeout=15.0,
+            ) as client:
+                response = await client.get(
+                    f"{self._API_BASE}{path}",
+                    headers={"Authorization": f"Bearer {token}"},
+                    params=params,
+                )
+                response.raise_for_status()
+        except httpx.HTTPError as exc:
+            raise RuntimeError(f"Vercel request failed: {exc}") from exc
+        return _expect_dict(response.json(), "Vercel response")
+
+    async def _post_json(
+        self,
+        path: str,
+        *,
+        credentials: Mapping[str, str],
+        body: Mapping[str, object],
+        team_id: str | None = None,
+    ) -> dict[str, object]:
+        token = self._require_token(credentials)
+        params = {"teamId": team_id} if team_id is not None else None
+        try:
+            async with httpx.AsyncClient(
+                transport=self._transport,
+                timeout=30.0,
+            ) as client:
+                response = await client.post(
+                    f"{self._API_BASE}{path}",
+                    headers={
+                        "Authorization": f"Bearer {token}",
+                        "Content-Type": "application/json",
+                    },
+                    params=params,
+                    json=body,
+                )
+                response.raise_for_status()
+        except httpx.HTTPError as exc:
+            raise RuntimeError(f"Vercel request failed: {exc}") from exc
+        return _expect_dict(response.json(), "Vercel response")
+
+    @staticmethod
+    def _require_token(credentials: Mapping[str, str]) -> str:
+        token = credentials.get("access_token")
+        if token is None or token.strip() == "":
+            raise RuntimeError("Missing access_token for Vercel connection.")
+        return token
+
+
 class FirefliesToolProvider(IntegrationRuntimeProvider):
     def __init__(self, *, transport: httpx.AsyncBaseTransport | None = None) -> None:
         self._transport = transport
@@ -365,12 +565,7 @@ def build_runtime_providers() -> dict[str, IntegrationRuntimeProvider]:
             server_url="https://api.githubcopilot.com/mcp/",
             token_field="access_token",
         ),
-        "vercel": HostedMcpToolProvider(
-            provider_id="vercel",
-            server_url="https://mcp.vercel.com",
-            token_field="access_token",
-            token_refresher=refresh_vercel_mcp_token,
-        ),
+        "vercel": VercelToolProvider(),
         "posthog": HostedMcpToolProvider(
             provider_id="posthog",
             server_url="https://mcp.posthog.com/mcp",
@@ -413,6 +608,13 @@ def _expect_dict(value: object, label: str) -> dict[str, object]:
     if not isinstance(value, dict):
         raise RuntimeError(f"Unexpected {label} payload.")
     return value
+
+
+def _normalize_vercel_url(url: str) -> str:
+    """Return *url* prefixed with ``https://`` when it is a bare host name."""
+    if url.startswith("http"):
+        return url
+    return f"https://{url}"
 
 
 def _expect_list(value: object, label: str) -> list[object]:

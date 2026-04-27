@@ -47,7 +47,14 @@ const providers: readonly ProviderDefinition[] = [
     apiKeyFields: ["api_key"],
     helpUrl: "https://fireflies.ai/account/integrations",
   },
-  { id: "vercel", name: "Vercel", authType: "oauth2" },
+  {
+    id: "vercel",
+    name: "Vercel",
+    authType: "api_key",
+    apiKeyFields: ["access_token"],
+    helpUrl:
+      "https://vercel.com/kb/guide/how-do-i-use-a-vercel-api-access-token",
+  },
   { id: "airtable", name: "Airtable", authType: "oauth2" },
 ];
 

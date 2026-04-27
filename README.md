@@ -137,7 +137,7 @@ Create `web/.env` from `web/.env.example`. Leave `VITE_API_URL` empty to use the
 
 The bot entrypoint expects a populated `.env` file or equivalent environment variables. The product manager and user researcher runtimes require `OPENAI_API_KEY`, and currently share `PRODUCT_MANAGER_MODEL` when set or `openai:gpt-5.4` by default.
 
-Connected integrations now initialize automatically from the stored server-scoped credentials. Pixie loads live hosted MCP tools for Notion, GitHub, Vercel, and PostHog at dispatch time, and uses direct API-backed tools for Airtable and Fireflies when no hosted MCP server is available. There is no extra `*_MCP_SERVER_*` enablement configuration.
+Connected integrations now initialize automatically from the stored server-scoped credentials. Pixie loads live hosted MCP tools for Notion, GitHub, and PostHog at dispatch time, uses direct API-backed tools for Airtable and Fireflies when no hosted MCP server is available, and uses the Vercel REST API (authenticated with a personal access token) to publish prototype deployments. There is no extra `*_MCP_SERVER_*` enablement configuration.
 
 The settings API expects session and encryption keys plus OAuth client credentials. Supabase remains optional; when it is not configured, both the web app and bot default to the shared local SQLite store at `CONNECTION_STORE_SQLITE_PATH` so local end-to-end flows work across a single combined process or separate processes.
 

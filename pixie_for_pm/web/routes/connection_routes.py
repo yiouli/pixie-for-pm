@@ -17,12 +17,8 @@ from pixie_for_pm.web.providers.api_key import InvalidApiKeyCredentialsError
 from pixie_for_pm.web.providers.oauth import (
     InvalidOAuthStateError,
     OAuthProviderError,
-    build_pkce_code_challenge,
     exchange_notion_mcp_code,
-    exchange_vercel_mcp_code,
-    generate_pkce_code_verifier,
     prepare_notion_mcp_authorization,
-    prepare_vercel_mcp_authorization,
 )
 from pixie_for_pm.web.store import ConnectionRecord, ServerRecord
 
@@ -30,7 +26,6 @@ router = APIRouter(prefix="/api/connections", tags=["connections"])
 
 CredentialsBody = Annotated[dict[str, str], Body(...)]
 
-_PKCE_VERIFIER_COOKIE = "_oauth_pkce_verifier"
 _NOTION_CONTEXT_COOKIE = "_oauth_notion_context"
 _PKCE_COOKIE_MAX_AGE = 60 * 10
 
@@ -114,28 +109,8 @@ def _resolve_settings_url(request: Request, services: WebAppServices) -> str:
     return configured_url.rstrip("/")
 
 
-def _provider_uses_pkce(provider: str) -> bool:
-    return provider == "vercel"
-
-
 def _provider_uses_hosted_mcp_oauth(provider: str) -> bool:
-    return provider in {"notion", "vercel"}
-
-
-def _set_pkce_verifier_cookie(
-    response: Response,
-    *,
-    code_verifier: str,
-    callback_url: str,
-) -> None:
-    response.set_cookie(
-        _PKCE_VERIFIER_COOKIE,
-        code_verifier,
-        max_age=_PKCE_COOKIE_MAX_AGE,
-        httponly=True,
-        samesite="lax",
-        secure=callback_url.startswith("https"),
-    )
+    return provider == "notion"
 
 
 def _set_notion_context_cookie(
@@ -234,22 +209,12 @@ async def authorize_connection(
 
     if _provider_uses_hosted_mcp_oauth(provider):
         try:
-            if provider == "notion":
-                notion_authorization = await prepare_notion_mcp_authorization(
-                    state=state,
-                    redirect_uri=callback_url,
-                    client_name="Pixie",
-                    client_uri=_resolve_settings_url(request, services),
-                )
-            else:
-                notion_authorization = await prepare_vercel_mcp_authorization(
-                    state=state,
-                    redirect_uri=callback_url,
-                    client_name="Pixie",
-                    client_uri=_resolve_settings_url(request, services),
-                    client_id=services.settings.oauth_client_ids.get("vercel"),
-                    client_secret=services.settings.oauth_client_secrets.get("vercel"),
-                )
+            notion_authorization = await prepare_notion_mcp_authorization(
+                state=state,
+                redirect_uri=callback_url,
+                client_name="Pixie",
+                client_uri=_resolve_settings_url(request, services),
+            )
         except OAuthProviderError as exc:
             raise HTTPException(status_code=502, detail=str(exc)) from exc
 
@@ -273,33 +238,19 @@ async def authorize_connection(
         )
         return notion_response
 
-    code_verifier: str | None = None
-    code_challenge: str | None = None
-    if _provider_uses_pkce(provider):
-        code_verifier = generate_pkce_code_verifier()
-        code_challenge = build_pkce_code_challenge(code_verifier)
     try:
         authorize_url = services.oauth_service.get_authorize_url(
             provider,
             state,
             redirect_uri=callback_url,
-            code_challenge=code_challenge,
+            code_challenge=None,
         )
     except OAuthProviderError as exc:
         raise HTTPException(status_code=502, detail=str(exc)) from exc
 
-    response: Response
     if response_mode == "json":
-        response = JSONResponse({"authorize_url": authorize_url})
-    else:
-        response = RedirectResponse(authorize_url, status_code=302)
-    if code_verifier is not None:
-        _set_pkce_verifier_cookie(
-            response,
-            code_verifier=code_verifier,
-            callback_url=callback_url,
-        )
-    return response
+        return JSONResponse({"authorize_url": authorize_url})
+    return RedirectResponse(authorize_url, status_code=302)
 
 
 @router.get("/oauth/callback")
@@ -309,7 +260,6 @@ async def oauth_callback(
     request: Request,
     services: ServicesDep,
     provider: str | None = None,
-    pkce_verifier: Annotated[str | None, Cookie(alias=_PKCE_VERIFIER_COOKIE)] = None,
     notion_context: Annotated[str | None, Cookie(alias=_NOTION_CONTEXT_COOKIE)] = None,
 ) -> RedirectResponse:
     try:
@@ -328,46 +278,27 @@ async def oauth_callback(
     if server.owner_user_id != parsed_state.user_id:
         raise HTTPException(status_code=403, detail="Not authorized for this server")
 
-    code_verifier: str | None = None
     if _provider_uses_hosted_mcp_oauth(parsed_state.provider):
         if notion_context is None:
             raise HTTPException(status_code=400, detail="Missing Notion OAuth context")
         notion_oauth_context = _parse_notion_context_cookie(notion_context)
         try:
-            if parsed_state.provider == "notion":
-                token_payload, scopes = await exchange_notion_mcp_code(
-                    code=code,
-                    redirect_uri=_resolve_callback_url(request, services),
-                    code_verifier=str(notion_oauth_context["code_verifier"]),
-                    client_id=str(notion_oauth_context["client_id"]),
-                    client_secret=(
-                        str(notion_oauth_context["client_secret"])
-                        if notion_oauth_context["client_secret"] is not None
-                        else None
-                    ),
-                    resource=(
-                        str(notion_oauth_context["resource"])
-                        if notion_oauth_context["resource"] is not None
-                        else None
-                    ),
-                )
-            else:
-                token_payload, scopes = await exchange_vercel_mcp_code(
-                    code=code,
-                    redirect_uri=_resolve_callback_url(request, services),
-                    code_verifier=str(notion_oauth_context["code_verifier"]),
-                    client_id=str(notion_oauth_context["client_id"]),
-                    client_secret=(
-                        str(notion_oauth_context["client_secret"])
-                        if notion_oauth_context["client_secret"] is not None
-                        else None
-                    ),
-                    resource=(
-                        str(notion_oauth_context["resource"])
-                        if notion_oauth_context["resource"] is not None
-                        else None
-                    ),
-                )
+            token_payload, scopes = await exchange_notion_mcp_code(
+                code=code,
+                redirect_uri=_resolve_callback_url(request, services),
+                code_verifier=str(notion_oauth_context["code_verifier"]),
+                client_id=str(notion_oauth_context["client_id"]),
+                client_secret=(
+                    str(notion_oauth_context["client_secret"])
+                    if notion_oauth_context["client_secret"] is not None
+                    else None
+                ),
+                resource=(
+                    str(notion_oauth_context["resource"])
+                    if notion_oauth_context["resource"] is not None
+                    else None
+                ),
+            )
         except OAuthProviderError as exc:
             raise HTTPException(status_code=502, detail=str(exc)) from exc
 
@@ -379,19 +310,12 @@ async def oauth_callback(
         if notion_oauth_context["resource"] is not None:
             token_payload["oauth_resource"] = str(notion_oauth_context["resource"])
     else:
-        if _provider_uses_pkce(parsed_state.provider):
-            if pkce_verifier is None:
-                raise HTTPException(
-                    status_code=400, detail="Missing OAuth PKCE verifier"
-                )
-            code_verifier = pkce_verifier
-
         try:
             token_payload, scopes = await services.oauth_service.exchange_code(
                 parsed_state.provider,
                 code,
                 redirect_uri=_resolve_callback_url(request, services),
-                code_verifier=code_verifier,
+                code_verifier=None,
             )
         except OAuthProviderError as exc:
             raise HTTPException(status_code=502, detail=str(exc)) from exc
@@ -411,8 +335,6 @@ async def oauth_callback(
         f"?server_id={parsed_state.server_id}&connected={parsed_state.provider}"
     )
     response = RedirectResponse(redirect_url, status_code=302)
-    if code_verifier is not None:
-        response.delete_cookie(_PKCE_VERIFIER_COOKIE)
     if notion_context is not None:
         response.delete_cookie(_NOTION_CONTEXT_COOKIE)
     return response
