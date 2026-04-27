@@ -709,11 +709,6 @@ async def test_orchestrator_runs_retention_demo_discovery_and_deep_dive_flow(
                             "synthesis here: https://www.notion.so/user-interview-synthesis"
                         ),
                         "I’m drafting the PRD for option #2 now.",
-                        (
-                            "The PRD for option #2 is ready here: "
-                            "https://www.notion.so/34f9952098ec810199ddd02c431566ed\n"
-                            "Want me to turn that into a quick clickable prototype next?"
-                        ),
                         "I’m turning it into a quick clickable prototype now.",
                         (
                             "The prototype is live at "
@@ -841,6 +836,15 @@ async def test_orchestrator_runs_retention_demo_discovery_and_deep_dive_flow(
         "https://www.notion.so/34f9952098ec810199ddd02c431566ed" in second_turn_content
     )
     assert "prototype" in second_turn_content.lower()
+    # The PRD-ready reply must be authored deterministically from the PM artifact.
+    # If the coordinator routes it through the LLM, the model tends to dump the
+    # PRD body back into Discord. Asserting the exact short-form template guards
+    # against that regression.
+    assert second_turn_content == (
+        "PRD for option #2 ready: "
+        "https://www.notion.so/34f9952098ec810199ddd02c431566ed\n"
+        "Want me to spin up a quick clickable prototype for it next?"
+    )
 
     assert [message.agent for message in third_result.transcript] == [
         AgentRole.COORDINATOR,

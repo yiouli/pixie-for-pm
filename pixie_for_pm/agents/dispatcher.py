@@ -370,7 +370,18 @@ async def _handle_demo_handoff(
             ],
         )
 
-    if demo_payload.stage in {OPTIONS_SUMMARY_STAGE, PRD_READY_STAGE}:
+    if demo_payload.stage == PRD_READY_STAGE:
+        reply = _render_prd_ready_reply(demo_payload.artifact)
+        return AgentExecution(
+            messages=[
+                AgentMessage(
+                    agent=AgentRole.COORDINATOR,
+                    content=reply,
+                )
+            ]
+        )
+
+    if demo_payload.stage == OPTIONS_SUMMARY_STAGE:
         reply = await _generate_coordinator_reply(
             context,
             model=model,
@@ -670,6 +681,40 @@ def _build_prd_ready_reply_context(
     if page_url != "":
         lines.extend(("PRD URL:", page_url))
     return "\n".join(lines)
+
+
+def _render_prd_ready_reply(artifact: str) -> str:
+    """Deterministically render the PRD-ready reply from the PM's artifact.
+
+    The coordinator must not author this reply with an LLM: when given only the
+    option number and Notion URL, the model tends to hallucinate the PRD body
+    back into the chat. The product spec calls for a short, fixed reply that
+    shares the link and asks about the prototype.
+    """
+
+    payload = parse_demo_artifact(artifact)
+    if payload is None or payload.get("kind") != PRD_READY_ARTIFACT_KIND:
+        return artifact.strip()
+
+    option_value = payload.get("option_number")
+    option_label = (
+        f"option #{option_value}" if option_value is not None else "the selected option"
+    )
+
+    page_url = _string_field(payload, "page_url")
+    persisted_value = payload.get("persisted")
+
+    if page_url != "":
+        prd_line = f"PRD for {option_label} ready: {page_url}"
+    elif persisted_value is True:
+        prd_line = f"PRD for {option_label} saved to Notion (page link not returned)."
+    else:
+        prd_line = (
+            f"PRD for {option_label} drafted internally "
+            "(Notion write was not available)."
+        )
+
+    return f"{prd_line}\nWant me to spin up a quick clickable prototype for it next?"
 
 
 def _build_prototype_ready_reply_context(
