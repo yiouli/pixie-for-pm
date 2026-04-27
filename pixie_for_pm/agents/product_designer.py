@@ -264,7 +264,10 @@ async def _publish_demo_prototype(
         deploy_tool,
         {
             "project_name": project_name,
-            "deployment_summary": _deployment_summary(summary),
+            "deployment_summary": _deployment_summary(
+                summary,
+                project_name=project_name,
+            ),
             "files": _build_prototype_files(summary=summary, project_name=project_name),
             "target": "production",
         },
@@ -351,9 +354,19 @@ def _escape_html(text: str) -> str:
     )
 
 
-def _pick_project_name(project_listing: str | None) -> str:
-    if project_listing is None:
+def _build_demo_project_name(context: WorkflowContext) -> str:
+    return _pick_project_name(context.thread_key)
+
+
+def _pick_project_name(name_seed: str | None) -> str:
+    if not name_seed:
         return "pixie-retention-demo"
+
+    slug = re.sub(r"[^a-z0-9]+", "-", name_seed.casefold()).strip("-")
+    if not slug:
+        return "pixie-retention-demo"
+    if slug.startswith("pixie-retention-demo"):
+        return slug
     return f"pixie-retention-demo-{slug}"
 
 

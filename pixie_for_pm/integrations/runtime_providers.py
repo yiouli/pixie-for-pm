@@ -326,6 +326,7 @@ class VercelToolProvider(IntegrationRuntimeProvider):
             body: dict[str, object] = {
                 "name": project_name,
                 "files": file_payload,
+                "public": True,
                 "projectSettings": {"framework": None},
             }
             if target is not None:

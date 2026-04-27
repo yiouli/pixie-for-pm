@@ -511,6 +511,7 @@ async def test_vercel_tool_provider_create_deployment_uploads_inline_files() -> 
     body = captured["body"]
     assert isinstance(body, dict)
     assert body["name"] == "pixie-retention-demo"
+    assert body["public"] is True
     assert body["target"] == "production"
     assert body["files"] == [
         {"file": "index.html", "data": "<!doctype html><title>x</title>"}
