@@ -10,6 +10,7 @@ from pixie_for_pm.config.settings import AppSettings
 if TYPE_CHECKING:
     from pixie_for_pm.web.encryption import CredentialCipher
     from pixie_for_pm.web.providers.api_key import ApiKeyValidator
+    from pixie_for_pm.web.providers.discord_guilds import DiscordGuildService
     from pixie_for_pm.web.providers.discord_login import DiscordLoginService
     from pixie_for_pm.web.providers.oauth import OAuthService
     from pixie_for_pm.web.session import SessionCodec
@@ -20,6 +21,7 @@ if TYPE_CHECKING:
 class WebAppServices:
     settings: AppSettings
     store: ConnectionStore
+    discord_guild_service: DiscordGuildService
     discord_login_service: DiscordLoginService
     session_codec: SessionCodec
     api_key_validator: ApiKeyValidator

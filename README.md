@@ -70,7 +70,7 @@ The integration settings flow is:
 1. A Discord user runs `/settings` in a guild where the bot is installed.
 2. The bot replies with an ephemeral link to `/settings?server_id=<guild-id>` on the FastAPI-hosted web app.
 3. FastAPI serves the built SPA from `web/dist`, and the browser loads the settings UI from the same origin as the API.
-4. The settings UI establishes a Discord-backed session and claims the Discord server for the current app user.
+4. The settings UI establishes a Discord-backed session, claims the Discord server for the current app user, and loads the guild name/icon for the workspace header when Discord returns them.
 5. The FastAPI server stores encrypted connection credentials in the shared connection store.
 6. The bot initializes a request-scoped integration toolset from that shared store, keyed by Discord server ID, before each LangGraph dispatch.
 

@@ -3,6 +3,7 @@ from fastapi.testclient import TestClient
 from pixie_for_pm.config.settings import load_settings
 from pixie_for_pm.web.app import create_app
 from pixie_for_pm.web.auth import AuthenticatedUser, get_current_user
+from pixie_for_pm.web.providers.discord_guilds import DiscordGuild
 from pixie_for_pm.web.store import InMemoryConnectionStore
 
 _FERNET_KEY = "j0aN3s-cLScfv0GfNyG8t0UyONn7y8u2s6o6cLs1hYw="
@@ -81,7 +82,53 @@ def test_list_servers_returns_owned_servers_only() -> None:
         {
             "id": "server-1",
             "discord_server_id": "server-123",
+            "icon_url": None,
             "name": None,
             "owned_by_current_user": True,
         }
     ]
+
+
+class StubDiscordGuildService:
+    async def get_guild(self, discord_server_id: str) -> DiscordGuild:
+        return DiscordGuild(
+            id=discord_server_id,
+            name="BlueSoul",
+            icon_url=(
+                "https://cdn.discordapp.com/icons/"
+                "server-123/abcdef0123456789.png?size=128"
+            ),
+        )
+
+
+def test_claim_server_populates_discord_server_metadata() -> None:
+    store = InMemoryConnectionStore()
+    app = create_app(
+        load_settings(_settings()),
+        store=store,
+        discord_guild_service=StubDiscordGuildService(),
+    )
+    app.dependency_overrides[get_current_user] = lambda: _OWNER
+
+    client = TestClient(app)
+    response = client.post("/api/servers/server-123/claim")
+
+    assert response.status_code == 201
+    assert response.json() == {
+        "id": "server-1",
+        "discord_server_id": "server-123",
+        "icon_url": (
+            "https://cdn.discordapp.com/icons/"
+            "server-123/abcdef0123456789.png?size=128"
+        ),
+        "name": "BlueSoul",
+        "owned_by_current_user": True,
+    }
+
+    persisted_response = client.get("/api/servers/server-123")
+
+    assert persisted_response.status_code == 200
+    assert persisted_response.json()["name"] == "BlueSoul"
+    assert persisted_response.json()["icon_url"] == (
+        "https://cdn.discordapp.com/icons/" "server-123/abcdef0123456789.png?size=128"
+    )

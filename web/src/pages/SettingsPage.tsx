@@ -6,9 +6,10 @@ import { ProviderCard } from "../components/ProviderCard";
 import { ApiError, apiFetch } from "../lib/api";
 import { getCurrentUser, redirectToDiscordLogin } from "../lib/auth";
 
-type ServerSummary = {
+export type ServerSummary = {
   id: string;
   discord_server_id: string;
+  icon_url: string | null;
   name: string | null;
   owned_by_current_user: boolean;
 };
@@ -220,37 +221,16 @@ export function SettingsPage() {
     <Shell
       title="Pixie PM Settings"
       subtitle={
-        server ? `Server ${server.discord_server_id}` : "Server settings"
+        server?.name ?? (server ? "Discord server settings" : "Server settings")
       }
     >
       <div className="flex flex-col gap-10">
-        <section className="flex flex-col gap-4 rounded-4xl border border-white/60 bg-white/80 p-6 shadow-[0_24px_80px_rgba(32,54,48,0.12)] backdrop-blur md:flex-row md:items-center md:justify-between">
-          <div>
-            <p className="text-sm uppercase tracking-[0.3em] text-teal-700">
-              Workspace
-            </p>
-            <h1 className="mt-2 text-4xl font-bold text-stone-950">
-              {server?.name ?? serverId}
-            </h1>
-            <p className="mt-2 max-w-2xl text-sm text-stone-600">
-              Connect the tools your product team agents can use inside this
-              Discord server.
-            </p>
-          </div>
-          <div className="flex items-center gap-4">
-            <div className="text-right text-sm text-stone-600">
-              <div className="font-semibold text-stone-900">{viewerName}</div>
-              <div>Discord-authenticated workspace access</div>
-            </div>
-            <button
-              className="rounded-full border border-stone-300 px-5 py-2 text-sm font-semibold text-stone-700 transition hover:border-stone-400"
-              onClick={handleLogout}
-              type="button"
-            >
-              Logout
-            </button>
-          </div>
-        </section>
+        <WorkspaceHeader
+          fallbackServerId={serverId}
+          onLogout={handleLogout}
+          server={server}
+          viewerName={viewerName}
+        />
 
         {connectedProvider ? (
           <div className="rounded-3xl border border-emerald-200 bg-emerald-50 px-5 py-4 text-sm font-medium text-emerald-800">
@@ -308,6 +288,66 @@ export function SettingsPage() {
   );
 }
 
+export function WorkspaceHeader({
+  server,
+  fallbackServerId,
+  viewerName,
+  onLogout,
+}: {
+  server: ServerSummary | null;
+  fallbackServerId: string | null;
+  viewerName: string;
+  onLogout: () => void | Promise<void>;
+}) {
+  const serverName = server?.name ?? fallbackServerId ?? "Discord server";
+  const avatarLabel = server?.name ?? "Discord server";
+
+  return (
+    <section className="flex flex-col gap-4 rounded-4xl border border-white/60 bg-white/80 p-6 shadow-[0_24px_80px_rgba(32,54,48,0.12)] backdrop-blur md:flex-row md:items-center md:justify-between">
+      <div className="flex items-center gap-4 md:gap-5">
+        {server?.icon_url ? (
+          <img
+            alt={`${avatarLabel} server icon`}
+            className="h-16 w-16 rounded-3xl border border-stone-200/80 object-cover shadow-[0_12px_30px_rgba(32,54,48,0.12)] md:h-20 md:w-20"
+            src={server.icon_url}
+          />
+        ) : (
+          <div className="flex h-16 w-16 items-center justify-center rounded-3xl border border-stone-200/80 bg-stone-100 text-xl font-bold text-stone-600 shadow-[0_12px_30px_rgba(32,54,48,0.08)] md:h-20 md:w-20 md:text-2xl">
+            {getServerMonogram(serverName)}
+          </div>
+        )}
+        <div>
+          <p className="text-sm uppercase tracking-[0.3em] text-teal-700">
+            Workspace
+          </p>
+          <h1 className="mt-2 text-4xl font-bold text-stone-950">
+            {serverName}
+          </h1>
+          <p className="mt-2 max-w-2xl text-sm text-stone-600">
+            Connect the tools your product team agents can use inside this
+            Discord server.
+          </p>
+        </div>
+      </div>
+      <div className="flex items-center gap-4">
+        <div className="text-right text-sm text-stone-600">
+          <div className="font-semibold text-stone-900">{viewerName}</div>
+          <div>Discord-authenticated workspace access</div>
+        </div>
+        <button
+          className="rounded-full border border-stone-300 px-5 py-2 text-sm font-semibold text-stone-700 transition hover:border-stone-400"
+          onClick={() => {
+            void onLogout();
+          }}
+          type="button"
+        >
+          Logout
+        </button>
+      </div>
+    </section>
+  );
+}
+
 function Shell({
   title,
   subtitle,
@@ -341,4 +381,14 @@ function getErrorMessage(error: unknown): string {
     return error.message;
   }
   return "Something went wrong while loading settings.";
+}
+
+function getServerMonogram(serverName: string): string {
+  const trimmedName = serverName.trim();
+  if (trimmedName === "") {
+    return "#";
+  }
+
+  const words = trimmedName.split(/\s+/).slice(0, 2);
+  return words.map((word) => word[0]?.toUpperCase() ?? "").join("") || "#";
 }

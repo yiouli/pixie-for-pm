@@ -79,6 +79,7 @@ from pixie_for_pm.config.settings import AppSettings, load_settings
 from pixie_for_pm.web.dependencies import WebAppServices
 from pixie_for_pm.web.encryption import CredentialCipher
 from pixie_for_pm.web.providers.api_key import HttpApiKeyValidator
+from pixie_for_pm.web.providers.discord_guilds import HttpDiscordGuildService
 from pixie_for_pm.web.providers.discord_login import (
     HttpDiscordLoginService,
     StaticDiscordLoginService,
@@ -94,6 +95,7 @@ from pixie_for_pm.web.store import build_connection_store
 if TYPE_CHECKING:
     from pixie_for_pm.discord.bot import DiscordRuntime
     from pixie_for_pm.web.providers.api_key import ApiKeyValidator
+    from pixie_for_pm.web.providers.discord_guilds import DiscordGuildService
     from pixie_for_pm.web.providers.discord_login import DiscordLoginService
     from pixie_for_pm.web.providers.oauth import OAuthService
     from pixie_for_pm.web.store import ConnectionStore
@@ -121,6 +123,7 @@ def create_app(
     settings: AppSettings,
     *,
     store: ConnectionStore | None = None,
+    discord_guild_service: DiscordGuildService | None = None,
     discord_login_service: DiscordLoginService | None = None,
     api_key_validator: ApiKeyValidator | None = None,
     oauth_service: OAuthService | None = None,
@@ -175,6 +178,9 @@ def create_app(
     services = WebAppServices(
         settings=settings,
         store=runtime_store,
+        discord_guild_service=(
+            discord_guild_service or HttpDiscordGuildService(settings.discord_bot_token)
+        ),
         discord_login_service=runtime_discord_login,
         session_codec=SessionCodec(settings.session_secret_key),
         api_key_validator=api_key_validator or HttpApiKeyValidator(),

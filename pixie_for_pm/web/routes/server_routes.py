@@ -4,6 +4,7 @@ from fastapi import APIRouter, HTTPException, Response, status
 
 from pixie_for_pm.web.auth import CurrentUserDep
 from pixie_for_pm.web.dependencies import ServicesDep
+from pixie_for_pm.web.providers.discord_guilds import DiscordGuildLookupError
 from pixie_for_pm.web.store import ServerOwnershipConflictError, ServerRecord
 
 router = APIRouter(prefix="/api/servers", tags=["servers"])
@@ -17,6 +18,7 @@ def _serialize_server(
     return {
         "id": server.id,
         "discord_server_id": server.discord_server_id,
+        "icon_url": server.icon_url,
         "name": server.name,
         "owned_by_current_user": owned_by_current_user,
     }
@@ -44,8 +46,19 @@ async def claim_server(
     services: ServicesDep,
     response: Response,
 ) -> dict[str, str | bool | None]:
+    guild = None
     try:
-        server, created = await services.store.claim_server(discord_server_id, user.id)
+        guild = await services.discord_guild_service.get_guild(discord_server_id)
+    except DiscordGuildLookupError:
+        guild = None
+
+    try:
+        server, created = await services.store.claim_server(
+            discord_server_id,
+            user.id,
+            name=guild.name if guild is not None else None,
+            icon_url=guild.icon_url if guild is not None else None,
+        )
     except ServerOwnershipConflictError as exc:
         raise HTTPException(status_code=409, detail="Server is already owned") from exc
 

@@ -19,6 +19,7 @@ class ServerRecord:
     discord_server_id: str
     owner_user_id: str
     name: str | None
+    icon_url: str | None
     created_at: datetime
 
 
@@ -48,6 +49,7 @@ class ConnectionStore(Protocol):
         discord_server_id: str,
         owner_user_id: str,
         name: str | None = None,
+        icon_url: str | None = None,
     ) -> tuple[ServerRecord, bool]: ...
 
     async def list_servers_for_owner(
@@ -101,13 +103,16 @@ class InMemoryConnectionStore(ConnectionStore):
         discord_server_id: str,
         owner_user_id: str,
         name: str | None = None,
+        icon_url: str | None = None,
     ) -> tuple[ServerRecord, bool]:
         existing = self._servers_by_discord_id.get(discord_server_id)
         if existing is not None:
             if existing.owner_user_id != owner_user_id:
                 raise ServerOwnershipConflictError(discord_server_id)
             updated = replace(
-                existing, name=name if name is not None else existing.name
+                existing,
+                name=name if name is not None else existing.name,
+                icon_url=icon_url if icon_url is not None else existing.icon_url,
             )
             self._servers_by_discord_id[discord_server_id] = updated
             return updated, False
@@ -118,6 +123,7 @@ class InMemoryConnectionStore(ConnectionStore):
             discord_server_id=discord_server_id,
             owner_user_id=owner_user_id,
             name=name,
+            icon_url=icon_url,
             created_at=self._now(),
         )
         self._servers_by_discord_id[discord_server_id] = created
@@ -223,6 +229,7 @@ class SQLiteConnectionStore(ConnectionStore):
                   discord_server_id text not null unique,
                   owner_user_id text not null,
                   name text,
+                                    icon_url text,
                   created_at text not null
                 );
 
@@ -239,6 +246,12 @@ class SQLiteConnectionStore(ConnectionStore):
                 );
                 """
             )
+            server_columns = {
+                row[1]
+                for row in connection.execute("pragma table_info(servers)").fetchall()
+            }
+            if "icon_url" not in server_columns:
+                connection.execute("alter table servers add column icon_url text")
 
     async def get_server_by_discord_id(
         self, discord_server_id: str
@@ -257,16 +270,23 @@ class SQLiteConnectionStore(ConnectionStore):
         discord_server_id: str,
         owner_user_id: str,
         name: str | None = None,
+        icon_url: str | None = None,
     ) -> tuple[ServerRecord, bool]:
         existing = await self.get_server_by_discord_id(discord_server_id)
         if existing is not None:
             if existing.owner_user_id != owner_user_id:
                 raise ServerOwnershipConflictError(discord_server_id)
-            if name is not None and name != existing.name:
+            next_name = name if name is not None else existing.name
+            next_icon_url = icon_url if icon_url is not None else existing.icon_url
+            if next_name != existing.name or next_icon_url != existing.icon_url:
                 with self._connect() as connection:
                     connection.execute(
-                        "update servers set name = ? where discord_server_id = ?",
-                        (name, discord_server_id),
+                        """
+                        update servers
+                        set name = ?, icon_url = ?
+                        where discord_server_id = ?
+                        """,
+                        (next_name, next_icon_url, discord_server_id),
                     )
                 updated = await self.get_server_by_discord_id(discord_server_id)
                 if updated is None:
@@ -280,14 +300,15 @@ class SQLiteConnectionStore(ConnectionStore):
             connection.execute(
                 """
                 insert into servers (
-                                    id, discord_server_id, owner_user_id, name, created_at
-                                ) values (?, ?, ?, ?, ?)
+                                    id, discord_server_id, owner_user_id, name, icon_url, created_at
+                                ) values (?, ?, ?, ?, ?, ?)
                 """,
                 (
                     server_id,
                     discord_server_id,
                     owner_user_id,
                     name,
+                    icon_url,
                     created_at,
                 ),
             )
@@ -416,16 +437,18 @@ class SupabaseConnectionStore(ConnectionStore):
         discord_server_id: str,
         owner_user_id: str,
         name: str | None = None,
+        icon_url: str | None = None,
     ) -> tuple[ServerRecord, bool]:
         existing = await self.get_server_by_discord_id(discord_server_id)
         if existing is not None:
             if existing.owner_user_id != owner_user_id:
                 raise ServerOwnershipConflictError(discord_server_id)
             next_name = name if name is not None else existing.name
-            if next_name != existing.name:
+            next_icon_url = icon_url if icon_url is not None else existing.icon_url
+            if next_name != existing.name or next_icon_url != existing.icon_url:
                 response = (
                     self._client.table("servers")
-                    .update({"name": next_name})
+                    .update({"name": next_name, "icon_url": next_icon_url})
                     .eq("id", existing.id)
                     .execute()
                 )
@@ -445,6 +468,7 @@ class SupabaseConnectionStore(ConnectionStore):
                     "discord_server_id": discord_server_id,
                     "owner_user_id": owner_user_id,
                     "name": name,
+                    "icon_url": icon_url,
                 }
             )
             .execute()
@@ -559,6 +583,7 @@ def _server_from_row(row: dict[str, object]) -> ServerRecord:
         discord_server_id=str(row["discord_server_id"]),
         owner_user_id=str(row["owner_user_id"]),
         name=_optional_text(row.get("name")),
+        icon_url=_optional_text(row.get("icon_url")),
         created_at=_parse_datetime(row.get("created_at")),
     )
 

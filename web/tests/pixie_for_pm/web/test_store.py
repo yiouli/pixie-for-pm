@@ -13,9 +13,21 @@ async def test_sqlite_store_shares_server_state_across_instances(
     writer = SQLiteConnectionStore(database_path)
     reader = SQLiteConnectionStore(database_path)
 
-    await writer.claim_server("server-123", "user-1")
+    await writer.claim_server(
+        "server-123",
+        "user-1",
+        name="BlueSoul",
+        icon_url=(
+            "https://cdn.discordapp.com/icons/"
+            "server-123/abcdef0123456789.png?size=128"
+        ),
+    )
 
     server = await reader.get_server_by_discord_id("server-123")
 
     assert server is not None
     assert server.discord_server_id == "server-123"
+    assert server.name == "BlueSoul"
+    assert server.icon_url == (
+        "https://cdn.discordapp.com/icons/" "server-123/abcdef0123456789.png?size=128"
+    )
