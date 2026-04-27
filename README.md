@@ -12,7 +12,7 @@ Pixie keeps five internal agent roles:
 - user researcher
 - product designer
 
-The dispatcher is the sole user-entry routing agent. It sends relevant work to a specialist, defaults ambiguous requests to the product manager, and rejects clearly out-of-scope requests directly. The product manager runs as a LangChain Deep Agents handler backed by an OpenAI chat model. The user researcher also runs as a LangGraph-backed deep agent, requires an active Notion connection, reads product and research context from Notion, follows the interview synthesis handbook workflow, and writes tagging plus synthesis artifacts back to Notion. The market analyst and product designer still use placeholder handlers.
+The dispatcher is the sole user-entry routing agent. It sends relevant work to a specialist, defaults ambiguous requests to the product manager, and rejects clearly out-of-scope requests directly. The product manager now runs as a handoff-aware Deep Agents controller backed by an OpenAI chat model. For the retention demo flow, it routes the initial question to the user researcher, returns with three hypotheses, and on a follow-up deep dive it drafts a Lenny Rachitsky-style PRD before handing design execution to the product designer. The user researcher also runs as a LangGraph-backed deep agent, requires an active Notion connection, reads product and research context from Notion, follows the interview synthesis handbook workflow, and writes tagging plus synthesis artifacts back to Notion. The product designer now runs as a deep agent for PM handoffs and uses Vercel when available for clickable prototype work. The market analyst still uses a placeholder handler.
 
 Discord exposes a single public bot identity. Users start work by mentioning the bot or replying to a prior bot message. LangGraph can still hand work across internal agents, but those handoffs are not rendered as separate Discord personas or synthetic in-channel messages.
 
@@ -54,8 +54,9 @@ The runtime flow is:
 4. The orchestrator resolves the guild-scoped integration connections, expands them into a typed LangGraph tool bundle for the turn, and keeps those live tool objects out of checkpoint state.
 5. LangGraph invokes the dispatcher first, then any internal specialists it needs, and persists checkpoint state to SQLite.
 6. Internal handoffs stay inside the orchestration graph instead of being emitted as Discord messages.
-7. The Discord adapter reacts with `:eyes:`, uses an editable placeholder reply for visible progress states such as `Thinking` and tool fetches, keeps Discord's native typing indicator active while the turn runs, and replaces the placeholder with either the final public response or an explicit error state.
-8. Slash-command interaction responses remain limited to `/settings` and other configuration flows.
+7. Handoff reasons can carry private working context between internal agents, so PM-led subflows can pass research findings, PRDs, and prototype summaries without exposing them in the public reply.
+8. The Discord adapter reacts with `:eyes:`, uses an editable placeholder reply for visible progress states such as `Thinking` and tool fetches, keeps Discord's native typing indicator active while the turn runs, and replaces the placeholder with either the final public response or an explicit error state.
+9. Slash-command interaction responses remain limited to `/settings` and other configuration flows.
 
 The Discord install flow is:
 
@@ -160,10 +161,12 @@ This scaffold now covers the first integration-management slice:
 - Credentials are encrypted before storage and decrypted only on the internal server-to-server path.
 - The web frontend provides the initial settings UX for OAuth and API-key providers.
 - Connected provider tools now resolve automatically from hosted MCP servers or direct provider APIs using the stored connection credentials.
+- Notion now uses the MCP-specific OAuth discovery and client-registration flow. Existing Notion connections created before this change should be disconnected and reconnected once so the runtime stores MCP-compatible tokens.
 - The dispatcher now chooses the initial specialist, defaults ambiguous work to the product manager, and rejects out-of-scope requests directly.
-- The product manager path now runs through LangChain Deep Agents with an OpenAI model.
+- The product manager path now runs through a handoff-aware Deep Agents controller with an OpenAI model.
 - The user researcher path now runs through LangGraph Deep Agents, requires Notion as the research source of truth, follows the handbook synthesis workflow, and writes tagging plus synthesis outputs back to Notion.
-- The market analyst and product designer still use placeholder business logic.
+- The product designer path now runs through Deep Agents for PM handoffs and uses Vercel when available for clickable prototype work.
+- The market analyst still uses placeholder business logic.
 - Each Discord-triggered turn now gets a typed integration tool bundle that can be passed directly to LangGraph agents as tools.
 
 See [specs/architecture.md](/home/yiouli/repo/pixie-for-pm/specs/architecture.md), [specs/integration-config.md](/home/yiouli/repo/pixie-for-pm/specs/integration-config.md), and [specs/agent-runtime-tooling.md](/home/yiouli/repo/pixie-for-pm/specs/agent-runtime-tooling.md) for the implementation outline and extension points.

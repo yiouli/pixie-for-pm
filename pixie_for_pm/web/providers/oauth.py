@@ -31,6 +31,21 @@ class OAuthProviderError(Exception):
     """Raised when the provider authorize or token flow fails."""
 
 
+@dataclass(frozen=True)
+class OAuthMetadata:
+    authorization_endpoint: str
+    token_endpoint: str
+    registration_endpoint: str | None = None
+
+
+@dataclass(frozen=True)
+class NotionMcpAuthorization:
+    authorize_url: str
+    code_verifier: str
+    client_id: str
+    client_secret: str | None = None
+
+
 class OAuthService(Protocol):
     def build_state(self, *, provider: str, server_id: str, user_id: str) -> str: ...
 
@@ -171,6 +186,76 @@ class StaticOAuthService:
         return payload, None
 
 
+async def prepare_notion_mcp_authorization(
+    *,
+    state: str,
+    redirect_uri: str,
+    client_name: str,
+    client_uri: str | None = None,
+) -> NotionMcpAuthorization:
+    metadata = await _discover_oauth_metadata("https://mcp.notion.com/mcp")
+    registration = await _register_dynamic_client(
+        metadata,
+        redirect_uri=redirect_uri,
+        client_name=client_name,
+        client_uri=client_uri,
+    )
+    code_verifier = generate_pkce_code_verifier()
+    code_challenge = build_pkce_code_challenge(code_verifier)
+    authorize_url = _append_query_parameters(
+        metadata.authorization_endpoint,
+        {
+            "response_type": "code",
+            "client_id": registration["client_id"],
+            "redirect_uri": redirect_uri,
+            "state": state,
+            "code_challenge": code_challenge,
+            "code_challenge_method": "S256",
+            "prompt": "consent",
+        },
+    )
+    return NotionMcpAuthorization(
+        authorize_url=authorize_url,
+        code_verifier=code_verifier,
+        client_id=registration["client_id"],
+        client_secret=registration.get("client_secret"),
+    )
+
+
+async def exchange_notion_mcp_code(
+    *,
+    code: str,
+    redirect_uri: str,
+    code_verifier: str,
+    client_id: str,
+    client_secret: str | None = None,
+) -> tuple[dict[str, str], list[str] | None]:
+    metadata = await _discover_oauth_metadata("https://mcp.notion.com/mcp")
+    payload = {
+        "grant_type": "authorization_code",
+        "code": code,
+        "client_id": client_id,
+        "redirect_uri": redirect_uri,
+        "code_verifier": code_verifier,
+    }
+    if client_secret is not None:
+        payload["client_secret"] = client_secret
+
+    async with httpx.AsyncClient(timeout=15.0) as client:
+        response = await client.post(
+            metadata.token_endpoint,
+            data=payload,
+            headers={
+                "Accept": "application/json",
+                "Content-Type": "application/x-www-form-urlencoded",
+            },
+        )
+    if response.status_code >= 400:
+        raise OAuthProviderError("OAuth token exchange failed for provider 'notion'.")
+
+    return _parse_token_response(response)
+
+
 class HttpOAuthService:
     def __init__(self, settings: AppSettings) -> None:
         secret = settings.credentials_encryption_key or settings.session_secret_key
@@ -283,20 +368,143 @@ class HttpOAuthService:
             )
 
         raw_payload = response.json()
-        if not isinstance(raw_payload, dict):
-            raise OAuthProviderError("OAuth token response must be a JSON object.")
-        payload = {
-            str(key): str(value)
-            for key, value in raw_payload.items()
-            if value is not None
-        }
+        return _parse_token_response_data(raw_payload)
 
-        scope_value = raw_payload.get("scope")
-        scopes: list[str] | None = None
-        if isinstance(scope_value, str) and scope_value.strip() != "":
-            scopes = [scope for scope in scope_value.split(" ") if scope]
 
-        return payload, scopes
+async def _discover_oauth_metadata(mcp_server_url: str) -> OAuthMetadata:
+    protected_resource_url = _resolve_protected_resource_url(mcp_server_url)
+
+    async with httpx.AsyncClient(timeout=15.0) as client:
+        protected_resource_response = await client.get(protected_resource_url)
+        if protected_resource_response.status_code >= 400:
+            raise OAuthProviderError("Failed to discover OAuth protected resource.")
+        protected_resource = protected_resource_response.json()
+        if not isinstance(protected_resource, dict):
+            raise OAuthProviderError("OAuth protected resource must be a JSON object.")
+
+        authorization_servers = protected_resource.get("authorization_servers")
+        if (
+            not isinstance(authorization_servers, list)
+            or not authorization_servers
+            or not isinstance(authorization_servers[0], str)
+        ):
+            raise OAuthProviderError(
+                "OAuth protected resource returned no auth server."
+            )
+
+        metadata_url = _append_path(
+            authorization_servers[0], "/.well-known/oauth-authorization-server"
+        )
+        metadata_response = await client.get(metadata_url)
+        if metadata_response.status_code >= 400:
+            raise OAuthProviderError("Failed to discover OAuth authorization server.")
+
+    metadata_payload = metadata_response.json()
+    if not isinstance(metadata_payload, dict):
+        raise OAuthProviderError("OAuth authorization server metadata is invalid.")
+
+    authorization_endpoint = metadata_payload.get("authorization_endpoint")
+    token_endpoint = metadata_payload.get("token_endpoint")
+    registration_endpoint = metadata_payload.get("registration_endpoint")
+    if not isinstance(authorization_endpoint, str) or not isinstance(
+        token_endpoint, str
+    ):
+        raise OAuthProviderError("OAuth authorization server metadata is incomplete.")
+    if registration_endpoint is not None and not isinstance(registration_endpoint, str):
+        raise OAuthProviderError("OAuth registration endpoint metadata is invalid.")
+
+    return OAuthMetadata(
+        authorization_endpoint=authorization_endpoint,
+        token_endpoint=token_endpoint,
+        registration_endpoint=registration_endpoint,
+    )
+
+
+async def _register_dynamic_client(
+    metadata: OAuthMetadata,
+    *,
+    redirect_uri: str,
+    client_name: str,
+    client_uri: str | None,
+) -> dict[str, str]:
+    registration_endpoint = metadata.registration_endpoint
+    if registration_endpoint is None:
+        raise OAuthProviderError("OAuth server does not support client registration.")
+
+    registration_request: dict[str, object] = {
+        "client_name": client_name,
+        "redirect_uris": [redirect_uri],
+        "grant_types": ["authorization_code", "refresh_token"],
+        "response_types": ["code"],
+        "token_endpoint_auth_method": "none",
+    }
+    if client_uri is not None:
+        registration_request["client_uri"] = client_uri
+
+    async with httpx.AsyncClient(timeout=15.0) as client:
+        response = await client.post(
+            registration_endpoint,
+            json=registration_request,
+            headers={
+                "Content-Type": "application/json",
+                "Accept": "application/json",
+            },
+        )
+    if response.status_code >= 400:
+        raise OAuthProviderError("OAuth client registration failed.")
+
+    payload = response.json()
+    if not isinstance(payload, dict):
+        raise OAuthProviderError("OAuth client registration response is invalid.")
+    client_id = payload.get("client_id")
+    client_secret = payload.get("client_secret")
+    if not isinstance(client_id, str) or client_id.strip() == "":
+        raise OAuthProviderError("OAuth client registration returned no client_id.")
+    result = {"client_id": client_id}
+    if isinstance(client_secret, str) and client_secret.strip() != "":
+        result["client_secret"] = client_secret
+    return result
+
+
+def _resolve_protected_resource_url(mcp_server_url: str) -> str:
+    parts = urlsplit(mcp_server_url)
+    return urlunsplit(
+        (
+            parts.scheme,
+            parts.netloc,
+            "/.well-known/oauth-protected-resource",
+            "",
+            "",
+        )
+    )
+
+
+def _append_path(base_url: str, path: str) -> str:
+    parts = urlsplit(base_url)
+    return urlunsplit((parts.scheme, parts.netloc, path, "", ""))
+
+
+def _parse_token_response(
+    response: httpx.Response,
+) -> tuple[dict[str, str], list[str] | None]:
+    return _parse_token_response_data(response.json())
+
+
+def _parse_token_response_data(
+    raw_payload: object,
+) -> tuple[dict[str, str], list[str] | None]:
+    if not isinstance(raw_payload, dict):
+        raise OAuthProviderError("OAuth token response must be a JSON object.")
+    payload = {
+        str(key): str(value) for key, value in raw_payload.items() if value is not None
+    }
+
+    scope_value = raw_payload.get("scope")
+    scopes: list[str] | None = None
+    if isinstance(scope_value, str) and scope_value.strip() != "":
+        scopes = [scope for scope in scope_value.split(" ") if scope]
+
+    return payload, scopes
 
 
 def _append_query_parameters(url: str, parameters: dict[str, str]) -> str:

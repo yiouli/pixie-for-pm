@@ -98,6 +98,7 @@ class WorkflowContext:
     toolset: AgentToolset
     status_emitter: StatusEmitter | None = None
     response_emitter: ResponseEmitter | None = None
+    handoff_context: str | None = None
 
 
 @dataclass(frozen=True)

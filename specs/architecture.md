@@ -22,8 +22,9 @@ The first surface is a single public Discord bot. The second surface is a settin
 6. The dispatcher either rejects out-of-scope work directly, defaults ambiguous work to the product manager, or hands off to a specialist.
 7. The selected agent executes with access to the typed trigger context and initialized tool bundle.
 8. The user researcher specialist requires a live Notion integration and uses it as both the read surface for product and research context and the write surface for transcript tagging plus final synthesis artifacts.
-9. If the execution returns handoffs, the graph routes to the next internal agent without emitting a public Discord handoff message. Agents can hand off among the specialist roles, but they cannot hand work back to the dispatcher.
-10. The current turn’s messages are returned to the Discord transport for publication as a single public bot reply.
+9. The product manager can use structured handoff context to keep delegated research findings, PRD drafts, and designer prototype summaries private inside the same turn before it sends the public reply.
+10. If the execution returns handoffs, the graph routes to the next internal agent without emitting a public Discord handoff message. Agents can hand off among the specialist roles, but they cannot hand work back to the dispatcher.
+11. The current turn’s messages are returned to the Discord transport for publication as a single public bot reply.
 
 ## Discord Install Flow
 
@@ -59,6 +60,7 @@ The orchestration state keeps both a cumulative transcript and a turn-local tran
 - `transcript` persists all agent-visible messages for checkpoint recovery.
 - `turn_transcript` is reset at the start of each dispatch and contains only the current turn’s emitted messages.
 - `pending_handoffs` stores structured handoff requests between agent nodes without forcing those internal transitions into the public Discord transcript.
+- `current_handoff_reason` carries the active private handoff context into the current agent so one delegated step can pass structured output to the next.
 
 This split allows persistent execution without forcing the Discord transport to re-send historical messages on every invocation.
 
@@ -79,7 +81,7 @@ Outbound publication:
 
 ## Extension Points
 
-- Replace the remaining placeholder market analyst and product designer handlers in `pixie_for_pm/agents/registry.py` with real agent implementations.
+- Replace the remaining placeholder market analyst handler in `pixie_for_pm/agents/registry.py` with a real agent implementation.
 - Extend the hosted-MCP and API-backed provider runtime layer under `pixie_for_pm/integrations/` while keeping the typed toolset initializer stable.
 - Extend the FastAPI settings layer with live Supabase-backed persistence, token refresh, and provider-specific validation hardening.
 - Enrich the Discord adapter with thread ownership and richer error translation.
@@ -93,3 +95,15 @@ The user researcher agent follows the interview synthesis handbook as an operati
 - It then reads research context from Notion, including methodology notes, interview script, transcripts, past learnings, and existing tagged artifacts.
 - It codes evidence, clusters themes, identifies segments, contradictions, and say/do gaps, and drafts ranked insights grounded in transcript evidence.
 - It updates Notion with structured tagging artifacts plus the final synthesis deliverable so the Discord reply is only a summary of work already written back to the workspace.
+
+## Demo Retention Workflow
+
+For the current demo scenario, the PM-led orchestration path is intentionally specific:
+
+1. The dispatcher routes a retention-next-step question to the product manager.
+2. The product manager delegates the initial discovery step to the user researcher.
+3. The user researcher returns a private synthesis back to the product manager.
+4. The product manager responds publicly with three hypotheses plus a high-level proposal for each and asks which option to deepen.
+5. On a follow-up like "go deeper on #2", the product manager drafts a Lenny Rachitsky-style PRD internally.
+6. The product designer turns that PRD into a clickable prototype brief, using Vercel when connected.
+7. The product manager returns to the user with a concise review-ready summary of the PRD and prototype.

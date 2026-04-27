@@ -3,6 +3,7 @@ from __future__ import annotations
 from collections.abc import Awaitable, Callable, Mapping
 
 from pixie_for_pm.agents.dispatcher import build_dispatcher_handler
+from pixie_for_pm.agents.product_designer import build_product_designer_handler
 from pixie_for_pm.agents.product_manager import build_product_manager_handler
 from pixie_for_pm.agents.user_researcher import build_user_researcher_handler
 from pixie_for_pm.domain.models import (
@@ -42,6 +43,8 @@ def _build_placeholder_handler(role: AgentRole) -> AgentHandler:
 def default_agent_handlers() -> dict[AgentRole, AgentHandler]:
     handlers = {role: _build_placeholder_handler(role) for role in AgentRole}
     handlers[AgentRole.DISPATCHER] = build_dispatcher_handler()
+    handlers[AgentRole.PRODUCT_MANAGER] = build_product_manager_handler()
+    handlers[AgentRole.PRODUCT_DESIGNER] = build_product_designer_handler()
     handlers[AgentRole.USER_RESEARCHER] = build_user_researcher_handler()
     return handlers
 
@@ -58,6 +61,7 @@ def resolve_agent_handlers(
 __all__ = [
     "AgentHandler",
     "build_dispatcher_handler",
+    "build_product_designer_handler",
     "build_product_manager_handler",
     "build_user_researcher_handler",
     "default_agent_handlers",

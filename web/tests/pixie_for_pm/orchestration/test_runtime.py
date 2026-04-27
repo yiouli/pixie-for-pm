@@ -3,7 +3,12 @@ from pathlib import Path
 import pytest
 from langchain_core.language_models.fake_chat_models import FakeListChatModel
 
-from pixie_for_pm.agents.registry import AgentHandler, build_product_manager_handler
+from pixie_for_pm.agents.registry import (
+    AgentHandler,
+    build_product_designer_handler,
+    build_product_manager_handler,
+    build_user_researcher_handler,
+)
 from pixie_for_pm.discord.routing import build_dispatch_request
 from pixie_for_pm.domain.models import (
     AgentExecution,
@@ -113,6 +118,29 @@ class _StaticToolsetInitializer(ToolsetInitializer):
         del status_emitter
         self.calls.append(trigger)
         return self.toolset
+
+
+def _demo_toolset() -> AgentToolset:
+    return AgentToolset(
+        integrations=(
+            ConnectedIntegration(
+                provider_id="notion",
+                provider_name="Notion",
+                auth_type="oauth2",
+                status="active",
+                scopes=("read_content", "update_content"),
+                tool_names=("notion_search", "notion_update_page"),
+            ),
+            ConnectedIntegration(
+                provider_id="vercel",
+                provider_name="Vercel",
+                auth_type="oauth2",
+                status="active",
+                scopes=("projects.write",),
+                tool_names=("vercel_list_projects", "vercel_create_deployment"),
+            ),
+        )
+    )
 
 
 async def _assert_tool_context(context: WorkflowContext) -> AgentExecution:
@@ -484,3 +512,100 @@ async def test_orchestrator_rejects_handoffs_back_to_dispatcher(
     ) as orchestrator:
         with pytest.raises(ValueError, match="dispatcher"):
             await orchestrator.dispatch(request)
+
+
+@pytest.mark.asyncio
+async def test_orchestrator_runs_retention_demo_discovery_and_deep_dive_flow(
+    tmp_path: Path,
+) -> None:
+    thread_id = "discord-thread-demo"
+    initializer = _StaticToolsetInitializer(_demo_toolset())
+
+    async with PixieOrchestrator(
+        checkpoint_path=tmp_path / "retention-demo.sqlite",
+        agent_handlers={
+            AgentRole.PRODUCT_MANAGER: build_product_manager_handler(
+                model=_ToolCallingFakeListChatModel(
+                    responses=[
+                        "Here are three hypotheses to improve feature X retention:\n"
+                        "1. Tighten onboarding around the first weekly success.\n"
+                        "2. Add guided weekly habit loops for repeat value.\n"
+                        "3. Create manager nudges when teams stall.\n\n"
+                        "I would start with #2. Which direction do you want me to "
+                        "deepen?",
+                        "Problem statement\nUsers do not build a repeat weekly habit.\n\n"
+                        "Goals and non-goals\nIncrease weekly repeat usage without "
+                        "adding noisy reminders.",
+                        "I drafted the PRD for option #2, handed it to design, and "
+                        "the designer prepared a clickable Vercel prototype focused on "
+                        "the weekly habit loop. Review the prototype flow and tell me "
+                        "what you want changed before we move into delivery.",
+                    ]
+                )
+            ),
+            AgentRole.USER_RESEARCHER: build_user_researcher_handler(
+                model=_ToolCallingFakeListChatModel(
+                    responses=[
+                        "Research synthesis: users understand the core value after the "
+                        "first session, but they lack a clear reason to come back in "
+                        "week two without a guided recurring loop."
+                    ]
+                )
+            ),
+            AgentRole.PRODUCT_DESIGNER: build_product_designer_handler(
+                model=_ToolCallingFakeListChatModel(
+                    responses=[
+                        "Prototype summary: published a clickable Vercel concept for a "
+                        "weekly habit loop with a progress rail, next-step CTA, and "
+                        "team checkpoint screen."
+                    ]
+                )
+            ),
+        },
+        toolset_initializer=initializer,
+    ) as orchestrator:
+        first_result = await orchestrator.dispatch(
+            build_dispatch_request(
+                IncomingDiscordMessage(
+                    discord_message_id=19,
+                    discord_server_id="discord-server-demo",
+                    channel_id=29,
+                    thread_id=thread_id,
+                    author_id=38,
+                    content=(
+                        "It seems that feature X retention is low. What should we "
+                        "build next to improve that?"
+                    ),
+                    directly_mentions_bot=True,
+                    is_reply_to_bot=False,
+                )
+            )
+        )
+        second_result = await orchestrator.dispatch(
+            build_dispatch_request(
+                IncomingDiscordMessage(
+                    discord_message_id=20,
+                    discord_server_id="discord-server-demo",
+                    channel_id=29,
+                    thread_id=thread_id,
+                    author_id=38,
+                    content="Can you go deeper on #2?",
+                    directly_mentions_bot=False,
+                    is_reply_to_bot=True,
+                )
+            )
+        )
+
+    assert [message.agent for message in first_result.transcript] == [
+        AgentRole.PRODUCT_MANAGER
+    ]
+    assert "three hypotheses" in first_result.transcript[0].content.lower()
+    assert "which direction do you want me to deepen" in (
+        first_result.transcript[0].content.lower()
+    )
+
+    assert [message.agent for message in second_result.transcript] == [
+        AgentRole.PRODUCT_MANAGER
+    ]
+    assert "clickable vercel prototype" in second_result.transcript[0].content.lower()
+    assert "review the prototype flow" in second_result.transcript[0].content.lower()

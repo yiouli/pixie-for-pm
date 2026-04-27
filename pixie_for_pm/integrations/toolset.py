@@ -4,6 +4,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Literal, Protocol
 
+from langchain_core.messages import ToolMessage
 from langchain_core.tools import BaseTool, StructuredTool
 from pydantic import BaseModel
 
@@ -39,9 +40,18 @@ class ConnectedIntegration:
 
 
 @dataclass(frozen=True)
+class IntegrationLoadFailure:
+    provider_id: str
+    provider_name: str
+    status: str
+    error: str
+
+
+@dataclass(frozen=True)
 class AgentToolset:
     tools: tuple[BaseTool, ...] = ()
     integrations: tuple[ConnectedIntegration, ...] = ()
+    failures: tuple[IntegrationLoadFailure, ...] = ()
 
     def as_langgraph_tools(self) -> tuple[BaseTool, ...]:
         return self.tools
@@ -101,6 +111,7 @@ class IntegrationToolsetInitializer:
         connections = await self._store.list_connections(server.id)
         tools: list[BaseTool] = []
         integrations: list[ConnectedIntegration] = []
+        failures: list[IntegrationLoadFailure] = []
 
         for connection in connections:
             if connection.status != "active":
@@ -119,7 +130,15 @@ class IntegrationToolsetInitializer:
                     credentials=credentials,
                     trigger=trigger,
                 )
-            except Exception:
+            except Exception as exc:
+                failures.append(
+                    IntegrationLoadFailure(
+                        provider_id=provider.id,
+                        provider_name=provider.name,
+                        status=connection.status,
+                        error=str(exc),
+                    )
+                )
                 continue
 
             wrapped_tools = tuple(
@@ -145,7 +164,11 @@ class IntegrationToolsetInitializer:
                 )
             )
 
-        return AgentToolset(tools=tuple(tools), integrations=tuple(integrations))
+        return AgentToolset(
+            tools=tuple(tools),
+            integrations=tuple(integrations),
+            failures=tuple(failures),
+        )
 
     def _wrap_tool(
         self,
@@ -156,24 +179,40 @@ class IntegrationToolsetInitializer:
         server_id: str,
         status_emitter: StatusEmitter | None,
     ) -> BaseTool:
-        async def _invoke_tool(**kwargs: object) -> object:
-            await emit_status_update(
-                status_emitter,
-                f"Fetching data from {provider_name}...",
-            )
-            result = await tool.ainvoke(kwargs)
-            await self._store.touch_connection_last_used(server_id, provider_id)
-            await emit_status_update(
-                status_emitter,
-                f"Analyzing results from {provider_name}...",
-            )
-            return result
-
         response_format: Literal["content", "content_and_artifact"] = getattr(
             tool, "response_format", "content"
         )
         if response_format not in {"content", "content_and_artifact"}:
             response_format = "content"
+
+        async def _invoke_tool(**kwargs: object) -> object:
+            await emit_status_update(
+                status_emitter,
+                f"Fetching data from {provider_name}...",
+            )
+            if response_format == "content_and_artifact":
+                result = await tool.ainvoke(
+                    {
+                        "type": "tool_call",
+                        "id": f"wrapped-{provider_id}-{tool.name}",
+                        "name": tool.name,
+                        "args": kwargs,
+                    }
+                )
+                if isinstance(result, ToolMessage):
+                    wrapped_result: object = (result.content, result.artifact)
+                elif isinstance(result, tuple):
+                    wrapped_result = result
+                else:
+                    wrapped_result = (result, None)
+            else:
+                wrapped_result = await tool.ainvoke(kwargs)
+            await self._store.touch_connection_last_used(server_id, provider_id)
+            await emit_status_update(
+                status_emitter,
+                f"Analyzing results from {provider_name}...",
+            )
+            return wrapped_result
 
         return StructuredTool(
             name=tool.name,

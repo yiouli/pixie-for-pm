@@ -38,6 +38,7 @@ class WorkflowState(TypedDict):
     user_message: str
     current_agent: str
     dispatch_reason: str
+    current_handoff_reason: str | None
     transcript: Annotated[list[SerializedAgentMessage], add]
     turn_transcript: list[SerializedAgentMessage]
     pending_handoffs: list[SerializedAgentHandoff]
@@ -60,6 +61,7 @@ def build_initial_state(request: DispatchRequest) -> WorkflowState:
         user_message=request.message.content,
         current_agent=request.target_agent.value,
         dispatch_reason=request.reason,
+        current_handoff_reason=None,
         transcript=[],
         turn_transcript=[],
         pending_handoffs=[],
@@ -117,6 +119,7 @@ def _to_context(
         toolset,
         status_emitter,
         response_emitter,
+        state["current_handoff_reason"],
     )
 
 
@@ -189,12 +192,14 @@ def _route_after_agent(state: WorkflowState) -> str:
 
 
 def _dispatch_node(state: WorkflowState) -> dict[str, object]:
-    return {"turn_transcript": []}
+    del state
+    return {"turn_transcript": [], "current_handoff_reason": None}
 
 
 async def _handoff_node(state: WorkflowState) -> dict[str, object]:
     return {
         "current_agent": AgentRole(state["pending_handoffs"][0]["target_agent"]).value,
+        "current_handoff_reason": state["pending_handoffs"][0]["reason"],
         "pending_handoffs": state["pending_handoffs"][1:],
     }
 

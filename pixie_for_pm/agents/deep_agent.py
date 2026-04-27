@@ -23,6 +23,40 @@ ExecutionContextBuilder = Callable[[WorkflowContext], str | None]
 PreflightCheck = Callable[[WorkflowContext], AgentExecution | None]
 
 
+async def run_deep_agent(
+    *,
+    role: AgentRole,
+    agent_name: str,
+    system_prompt: str,
+    context: WorkflowContext,
+    model: str | BaseChatModel = DEFAULT_DEEP_AGENT_MODEL,
+    openai_api_key: str | None = None,
+    execution_context_builder: ExecutionContextBuilder | None = None,
+) -> str:
+    agent = create_deep_agent(
+        model=_resolve_model(model, openai_api_key=openai_api_key),
+        tools=list(context.toolset.as_langgraph_tools()),
+        system_prompt=system_prompt,
+        checkpointer=False,
+        name=agent_name,
+    )
+    result = await _invoke_agent_with_status_events(
+        agent=agent,
+        context=context,
+        role=role,
+        inputs={
+            "messages": _build_messages(
+                context,
+                execution_context_builder=execution_context_builder,
+            )
+        },
+        agent_name=agent_name,
+    )
+    return _extract_final_response_text(
+        cast(Sequence[BaseMessage], result.get("messages", []))
+    )
+
+
 def build_deep_agent_handler(
     *,
     role: AgentRole,
@@ -39,27 +73,14 @@ def build_deep_agent_handler(
             if preflight_result is not None:
                 return preflight_result
 
-        agent = create_deep_agent(
-            model=_resolve_model(model, openai_api_key=openai_api_key),
-            tools=list(context.toolset.as_langgraph_tools()),
-            system_prompt=system_prompt,
-            checkpointer=False,
-            name=agent_name,
-        )
-        result = await _invoke_agent_with_status_events(
-            agent=agent,
+        content = await run_deep_agent(
             context=context,
             role=role,
-            inputs={
-                "messages": _build_messages(
-                    context,
-                    execution_context_builder=execution_context_builder,
-                )
-            },
             agent_name=agent_name,
-        )
-        content = _extract_final_response_text(
-            cast(Sequence[BaseMessage], result.get("messages", []))
+            system_prompt=system_prompt,
+            model=model,
+            openai_api_key=openai_api_key,
+            execution_context_builder=execution_context_builder,
         )
         return AgentExecution(
             messages=[
@@ -218,6 +239,15 @@ def _build_messages(
         execution_context = execution_context_builder(context)
         if execution_context is not None and execution_context.strip() != "":
             messages.append(HumanMessage(content=execution_context))
+    if context.handoff_context is not None and context.handoff_context.strip() != "":
+        messages.append(
+            HumanMessage(
+                content=(
+                    "Internal handoff context from the prior agent:\n"
+                    f"{context.handoff_context}"
+                )
+            )
+        )
     messages.append(HumanMessage(content=context.user_message))
     return messages
 
@@ -251,3 +281,12 @@ def _coerce_text_content(content: object, *, strip: bool) -> str:
             return "\n".join(text_parts).strip()
         return "".join(text_parts)
     return ""
+
+
+__all__ = [
+    "DEFAULT_DEEP_AGENT_MODEL",
+    "ExecutionContextBuilder",
+    "PreflightCheck",
+    "build_deep_agent_handler",
+    "run_deep_agent",
+]

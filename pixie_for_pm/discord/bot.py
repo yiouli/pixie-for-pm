@@ -12,6 +12,7 @@ import discord
 from discord import app_commands
 
 from pixie_for_pm.agents.registry import (
+    build_product_designer_handler,
     build_product_manager_handler,
     build_user_researcher_handler,
 )
@@ -501,6 +502,10 @@ class PixieDiscordBot(discord.Client):
             settings.langgraph_checkpoint_path,
             agent_handlers={
                 AgentRole.PRODUCT_MANAGER: build_product_manager_handler(
+                    model=settings.product_manager_model,
+                    openai_api_key=settings.openai_api_key,
+                ),
+                AgentRole.PRODUCT_DESIGNER: build_product_designer_handler(
                     model=settings.product_manager_model,
                     openai_api_key=settings.openai_api_key,
                 ),

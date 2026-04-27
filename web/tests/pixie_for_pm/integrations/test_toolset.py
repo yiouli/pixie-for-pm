@@ -1,11 +1,13 @@
 from collections.abc import Mapping
 
 import pytest
+from langchain_core.messages import ToolMessage
 from langchain_core.tools import BaseTool, StructuredTool
 
 from pixie_for_pm.integrations.toolset import (
     AgentToolset,
     DiscordTriggerContext,
+    IntegrationLoadFailure,
     IntegrationRuntimeProvider,
     IntegrationToolsetInitializer,
 )
@@ -62,6 +64,46 @@ class _RecordingProvider(IntegrationRuntimeProvider):
                 coroutine=_search,
                 name="notion_search",
                 description="Search Notion.",
+            ),
+        )
+
+
+class _FailingProvider(IntegrationRuntimeProvider):
+    async def load_tools(
+        self,
+        *,
+        credentials: Mapping[str, str],
+        trigger: DiscordTriggerContext,
+    ) -> tuple[BaseTool, ...]:
+        del credentials, trigger
+        raise RuntimeError("401 Unauthorized from Notion MCP")
+
+
+class _ArtifactProvider(IntegrationRuntimeProvider):
+    def __init__(self) -> None:
+        self.invocations: list[dict[str, object]] = []
+
+    async def load_tools(
+        self,
+        *,
+        credentials: Mapping[str, str],
+        trigger: DiscordTriggerContext,
+    ) -> tuple[BaseTool, ...]:
+        del credentials, trigger
+
+        async def _search(query: str) -> tuple[list[dict[str, str]], dict[str, object]]:
+            self.invocations.append({"query": query})
+            return (
+                [{"type": "text", "text": "Found research notes"}],
+                {"structured_content": {"page_id": "page-123"}},
+            )
+
+        return (
+            StructuredTool.from_function(
+                coroutine=_search,
+                name="notion_search",
+                description="Search Notion.",
+                response_format="content_and_artifact",
             ),
         )
 
@@ -177,3 +219,95 @@ async def test_initialized_tool_invocation_passes_credentials_and_updates_last_u
         "Fetching data from Notion...",
         "Analyzing results from Notion...",
     ]
+
+
+@pytest.mark.asyncio
+async def test_initializer_records_failed_provider_initialization() -> None:
+    store = InMemoryConnectionStore()
+    cipher = CredentialCipher(_FERNET_KEY)
+
+    server, _ = await store.claim_server("guild-789", "user-3")
+    await store.upsert_connection(
+        server.id,
+        "notion",
+        cipher.encrypt_credentials({"access_token": "notion-token"}),
+        scopes=["read_content"],
+        status="active",
+    )
+
+    initializer = IntegrationToolsetInitializer(
+        store=store,
+        cipher=cipher,
+        providers={"notion": _FailingProvider()},
+    )
+
+    toolset = await initializer.initialize(
+        DiscordTriggerContext(
+            "guild-789",
+            "user-33",
+            111,
+            None,
+            222,
+            "channel-111-message-222",
+            "reply_to_bot",
+        )
+    )
+
+    assert toolset == AgentToolset(
+        failures=(
+            IntegrationLoadFailure(
+                provider_id="notion",
+                provider_name="Notion",
+                status="active",
+                error="401 Unauthorized from Notion MCP",
+            ),
+        )
+    )
+
+
+@pytest.mark.asyncio
+async def test_wrapped_content_and_artifact_tools_preserve_tool_artifacts() -> None:
+    store = InMemoryConnectionStore()
+    cipher = CredentialCipher(_FERNET_KEY)
+    notion_provider = _ArtifactProvider()
+
+    server, _ = await store.claim_server("guild-990", "user-4")
+    await store.upsert_connection(
+        server.id,
+        "notion",
+        cipher.encrypt_credentials({"access_token": "notion-token"}),
+        scopes=["read_content"],
+        status="active",
+    )
+
+    initializer = IntegrationToolsetInitializer(
+        store=store,
+        cipher=cipher,
+        providers={"notion": notion_provider},
+    )
+
+    toolset = await initializer.initialize(
+        DiscordTriggerContext(
+            "guild-990",
+            "user-44",
+            111,
+            None,
+            222,
+            "channel-111-message-222",
+            "reply_to_bot",
+        )
+    )
+
+    result = await toolset.tools[0].ainvoke(
+        {
+            "type": "tool_call",
+            "name": "notion_search",
+            "args": {"query": "roadmap"},
+            "id": "call-1",
+        }
+    )
+
+    assert isinstance(result, ToolMessage)
+    assert result.content == [{"type": "text", "text": "Found research notes"}]
+    assert result.artifact == {"structured_content": {"page_id": "page-123"}}
+    assert notion_provider.invocations == [{"query": "roadmap"}]

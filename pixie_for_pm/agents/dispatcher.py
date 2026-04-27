@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 
@@ -189,7 +190,17 @@ def _select_specialist(message: str) -> AgentRole | None:
 
 
 def _score_keywords(message: str, keywords: tuple[str, ...]) -> int:
-    return sum(1 for keyword in keywords if keyword in message)
+    return sum(1 for keyword in keywords if _keyword_in_message(message, keyword))
+
+
+def _keyword_in_message(message: str, keyword: str) -> bool:
+    if keyword.isalpha() and len(keyword) <= 2:
+        return (
+            re.search(rf"(?<![a-z0-9]){re.escape(keyword)}(?![a-z0-9])", message)
+            is not None
+        )
+
+    return keyword in message
 
 
 __all__ = ["DispatchDecision", "build_dispatcher_handler", "decide_dispatch"]

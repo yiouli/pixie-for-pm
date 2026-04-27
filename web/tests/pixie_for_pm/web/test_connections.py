@@ -200,6 +200,96 @@ def test_vercel_authorize_sets_pkce_cookie_and_challenge() -> None:
     assert "_oauth_pkce_verifier" in authorize_response.headers.get("set-cookie", "")
 
 
+def test_notion_authorize_and_callback_use_mcp_flow_context_cookie(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    store = _make_store()
+    app = create_app(
+        load_settings(_settings()),
+        store=store,
+        oauth_service=StaticOAuthService(
+            authorize_urls={"notion": "https://unused.example/authorize"},
+            token_payloads={},
+        ),
+    )
+    app.dependency_overrides[get_current_user] = lambda: _OWNER
+    client = TestClient(app, base_url="https://api.pixie.test")
+    client.post("/api/servers/server-123/claim")
+    cipher = CredentialCipher(_FERNET_KEY)
+
+    class _PreparedAuthorization:
+        def __init__(self, authorize_url: str) -> None:
+            self.authorize_url = authorize_url
+            self.code_verifier = "notion-code-verifier"
+            self.client_id = "registered-client-id"
+            self.client_secret = "registered-client-secret"
+
+    async def _prepare(**kwargs: Any) -> _PreparedAuthorization:
+        return _PreparedAuthorization(
+            authorize_url="https://mcp.notion.com/authorize?state=" + kwargs["state"]
+        )
+
+    async def _exchange(**kwargs: Any) -> tuple[dict[str, str], list[str] | None]:
+        assert kwargs["code"] == "code-123"
+        assert kwargs["client_id"] == "registered-client-id"
+        assert kwargs["client_secret"] == "registered-client-secret"
+        assert kwargs["code_verifier"] == "notion-code-verifier"
+        return (
+            {
+                "access_token": "mcp-access-token",
+                "refresh_token": "mcp-refresh-token",
+                "token_type": "bearer",
+            },
+            ["read", "write"],
+        )
+
+    monkeypatch.setattr(
+        "pixie_for_pm.web.routes.connection_routes.prepare_notion_mcp_authorization",
+        _prepare,
+    )
+    monkeypatch.setattr(
+        "pixie_for_pm.web.routes.connection_routes.exchange_notion_mcp_code",
+        _exchange,
+    )
+
+    authorize_response = client.get(
+        "/api/connections/notion/authorize?server_id=server-123&response_mode=json",
+        follow_redirects=False,
+    )
+    state = authorize_response.json()["authorize_url"].split("state=")[1]
+    callback_response = client.get(
+        "/api/connections/oauth/callback",
+        params={
+            "code": "code-123",
+            "state": state,
+        },
+        follow_redirects=False,
+    )
+
+    import asyncio
+
+    connection = asyncio.get_event_loop().run_until_complete(
+        store.get_connection_by_discord_server("server-123", "notion")
+    )
+    assert connection is not None
+    decrypted = cipher.decrypt_credentials(connection.credentials_encrypted)
+
+    assert authorize_response.status_code == 200
+    assert authorize_response.json() == {
+        "authorize_url": f"https://mcp.notion.com/authorize?state={state}"
+    }
+    assert "_oauth_notion_context" in authorize_response.headers.get("set-cookie", "")
+    assert callback_response.status_code == 302
+    assert callback_response.headers["Location"] == (
+        "https://app.pixie.test/settings?server_id=server-123&connected=notion"
+    )
+    assert decrypted == {
+        "access_token": "mcp-access-token",
+        "refresh_token": "mcp-refresh-token",
+        "token_type": "bearer",
+    }
+
+
 def test_disconnect_removes_credentials_from_store() -> None:
     store = _make_store()
     client = _client(store)

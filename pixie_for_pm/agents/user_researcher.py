@@ -4,17 +4,25 @@ from collections.abc import Awaitable, Callable
 
 from langchain_core.language_models.chat_models import BaseChatModel
 
-from pixie_for_pm.agents.deep_agent import (
-    DEFAULT_DEEP_AGENT_MODEL,
-    build_deep_agent_handler,
+from pixie_for_pm.agents.deep_agent import DEFAULT_DEEP_AGENT_MODEL, run_deep_agent
+from pixie_for_pm.agents.demo_flow import (
+    BLOCKED_STATUS,
+    RESEARCH_BRIEF_STAGE,
+    RESEARCH_FINDINGS_STAGE,
+    parse_demo_handoff,
+    serialize_demo_handoff,
 )
 from pixie_for_pm.domain.models import (
     AgentExecution,
+    AgentHandoff,
     AgentMessage,
     AgentRole,
     WorkflowContext,
 )
-from pixie_for_pm.integrations.toolset import ConnectedIntegration
+from pixie_for_pm.integrations.toolset import (
+    ConnectedIntegration,
+    IntegrationLoadFailure,
+)
 
 DEFAULT_USER_RESEARCHER_MODEL = DEFAULT_DEEP_AGENT_MODEL
 USER_RESEARCHER_AGENT_NAME = "pixie_user_researcher"
@@ -71,14 +79,93 @@ def build_user_researcher_handler(
     model: str | BaseChatModel = DEFAULT_USER_RESEARCHER_MODEL,
     openai_api_key: str | None = None,
 ) -> Callable[[WorkflowContext], Awaitable[AgentExecution]]:
-    return build_deep_agent_handler(
+    async def _handler(context: WorkflowContext) -> AgentExecution:
+        demo_payload = parse_demo_handoff(context.handoff_context)
+        if demo_payload is not None and demo_payload.stage == RESEARCH_BRIEF_STAGE:
+            return await _handle_demo_research_brief(
+                context,
+                brief=demo_payload.artifact,
+                model=model,
+                openai_api_key=openai_api_key,
+            )
+
+        preflight_result = _require_notion_integration(context)
+        if preflight_result is not None:
+            return preflight_result
+
+        content = await run_deep_agent(
+            role=AgentRole.USER_RESEARCHER,
+            agent_name=USER_RESEARCHER_AGENT_NAME,
+            system_prompt=_SYSTEM_PROMPT,
+            context=context,
+            model=model,
+            openai_api_key=openai_api_key,
+            execution_context_builder=_build_execution_context,
+        )
+        return AgentExecution(
+            messages=[
+                AgentMessage(
+                    agent=AgentRole.USER_RESEARCHER,
+                    content=content,
+                )
+            ]
+        )
+
+    return _handler
+
+
+async def _handle_demo_research_brief(
+    context: WorkflowContext,
+    *,
+    brief: str,
+    model: str | BaseChatModel,
+    openai_api_key: str | None,
+) -> AgentExecution:
+    if _require_notion_integration(context) is not None:
+        return AgentExecution(
+            messages=[],
+            handoffs=[
+                AgentHandoff(
+                    source_agent=AgentRole.USER_RESEARCHER,
+                    target_agent=AgentRole.PRODUCT_MANAGER,
+                    reason=serialize_demo_handoff(
+                        stage=RESEARCH_FINDINGS_STAGE,
+                        status=BLOCKED_STATUS,
+                        artifact=(
+                            "I couldn't complete the retention insight pass because "
+                            "Notion is not connected for this server. Connect Notion "
+                            "and rerun the request so I can pull interview context, "
+                            "prior learnings, and transcript evidence."
+                        ),
+                    ),
+                )
+            ],
+        )
+
+    findings = await run_deep_agent(
         role=AgentRole.USER_RESEARCHER,
         agent_name=USER_RESEARCHER_AGENT_NAME,
         system_prompt=_SYSTEM_PROMPT,
+        context=context,
         model=model,
         openai_api_key=openai_api_key,
-        execution_context_builder=_build_execution_context,
-        preflight_check=_require_notion_integration,
+        execution_context_builder=lambda current_context: _build_demo_execution_context(
+            current_context,
+            brief=brief,
+        ),
+    )
+    return AgentExecution(
+        messages=[],
+        handoffs=[
+            AgentHandoff(
+                source_agent=AgentRole.USER_RESEARCHER,
+                target_agent=AgentRole.PRODUCT_MANAGER,
+                reason=serialize_demo_handoff(
+                    stage=RESEARCH_FINDINGS_STAGE,
+                    artifact=findings,
+                ),
+            )
+        ],
     )
 
 
@@ -86,6 +173,22 @@ def _require_notion_integration(context: WorkflowContext) -> AgentExecution | No
     notion_integration = _find_notion_integration(context)
     if notion_integration is not None and notion_integration.tool_names:
         return None
+
+    notion_failure = _find_notion_failure(context)
+    if notion_failure is not None:
+        return AgentExecution(
+            messages=[
+                AgentMessage(
+                    agent=AgentRole.USER_RESEARCHER,
+                    content=(
+                        "Notion is connected for this server, but Pixie couldn't "
+                        "initialize the Notion tools. The current authorization may be "
+                        "invalid or expired. Reconnect Notion and try again. "
+                        f"Initialization error: {notion_failure.error}"
+                    ),
+                )
+            ]
+        )
 
     return AgentExecution(
         messages=[
@@ -136,10 +239,33 @@ def _build_execution_context(context: WorkflowContext) -> str:
     )
 
 
+def _build_demo_execution_context(context: WorkflowContext, *, brief: str) -> str:
+    return "\n".join(
+        (
+            _build_execution_context(context),
+            "PM retention demo brief:",
+            brief,
+            (
+                "Return the retention findings as a concise internal "
+                "synthesis the PM can use immediately."
+            ),
+        )
+    )
+
+
 def _find_notion_integration(context: WorkflowContext) -> ConnectedIntegration | None:
     for integration in context.toolset.integrations:
         if integration.provider_id == "notion" and integration.status == "active":
             return integration
+    return None
+
+
+def _find_notion_failure(
+    context: WorkflowContext,
+) -> IntegrationLoadFailure | None:
+    for failure in context.toolset.failures:
+        if failure.provider_id == "notion" and failure.status == "active":
+            return failure
     return None
 
 
