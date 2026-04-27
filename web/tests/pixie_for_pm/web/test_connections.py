@@ -168,36 +168,96 @@ def test_oauth_authorize_and_callback_store_tokens_and_redirect_back_to_settings
     }
 
 
-def test_vercel_authorize_sets_pkce_cookie_and_challenge() -> None:
+def test_vercel_authorize_and_callback_use_mcp_flow_context_cookie(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     store = _make_store()
     app = create_app(
         load_settings(_oauth_settings()),
         store=store,
-        oauth_service=StaticOAuthService(
-            authorize_urls={"vercel": "https://vercel.com/oauth/authorize"},
-            token_payloads={
-                "vercel": {
-                    "access_token": "oauth-access-token",
-                    "refresh_token": "oauth-refresh-token",
-                    "token_type": "bearer",
-                }
-            },
-        ),
+        oauth_service=StaticOAuthService(authorize_urls={}, token_payloads={}),
     )
     app.dependency_overrides[get_current_user] = lambda: _OWNER
-    client = TestClient(app)
+    client = TestClient(app, base_url="https://api.pixie.test")
     client.post("/api/servers/server-123/claim")
+    cipher = CredentialCipher(_FERNET_KEY)
+
+    class _PreparedAuthorization:
+        def __init__(self, authorize_url: str) -> None:
+            self.authorize_url = authorize_url
+            self.code_verifier = "vercel-code-verifier"
+            self.client_id = "vercel-registered-client-id"
+            self.client_secret = None
+            self.resource = "https://mcp.vercel.com/"
+
+    async def _prepare(**kwargs: Any) -> _PreparedAuthorization:
+        assert kwargs["client_id"] == "vercel-id"
+        assert kwargs["client_secret"] == "vercel-secret"
+        return _PreparedAuthorization(
+            authorize_url="https://vercel.com/oauth/authorize?state=" + kwargs["state"]
+        )
+
+    async def _exchange(**kwargs: Any) -> tuple[dict[str, str], list[str] | None]:
+        assert kwargs["code"] == "code-123"
+        assert kwargs["client_id"] == "vercel-registered-client-id"
+        assert kwargs["code_verifier"] == "vercel-code-verifier"
+        assert kwargs["resource"] == "https://mcp.vercel.com/"
+        return (
+            {
+                "access_token": "mcp-access-token",
+                "refresh_token": "mcp-refresh-token",
+                "token_type": "bearer",
+            },
+            ["openid", "offline_access"],
+        )
+
+    monkeypatch.setattr(
+        "pixie_for_pm.web.routes.connection_routes.prepare_vercel_mcp_authorization",
+        _prepare,
+    )
+    monkeypatch.setattr(
+        "pixie_for_pm.web.routes.connection_routes.exchange_vercel_mcp_code",
+        _exchange,
+    )
 
     authorize_response = client.get(
         "/api/connections/vercel/authorize?server_id=server-123&response_mode=json",
         follow_redirects=False,
     )
-    query = parse_qs(urlsplit(authorize_response.json()["authorize_url"]).query)
+    state = authorize_response.json()["authorize_url"].split("state=")[1]
+    callback_response = client.get(
+        "/api/connections/oauth/callback",
+        params={
+            "code": "code-123",
+            "state": state,
+        },
+        follow_redirects=False,
+    )
+
+    import asyncio
+
+    connection = asyncio.get_event_loop().run_until_complete(
+        store.get_connection_by_discord_server("server-123", "vercel")
+    )
+    assert connection is not None
+    decrypted = cipher.decrypt_credentials(connection.credentials_encrypted)
 
     assert authorize_response.status_code == 200
-    assert query["code_challenge_method"] == ["S256"]
-    assert "code_challenge" in query
-    assert "_oauth_pkce_verifier" in authorize_response.headers.get("set-cookie", "")
+    assert authorize_response.json() == {
+        "authorize_url": f"https://vercel.com/oauth/authorize?state={state}"
+    }
+    assert "_oauth_notion_context" in authorize_response.headers.get("set-cookie", "")
+    assert callback_response.status_code == 302
+    assert callback_response.headers["Location"] == (
+        "https://api.pixie.test/settings?server_id=server-123&connected=vercel"
+    )
+    assert decrypted == {
+        "access_token": "mcp-access-token",
+        "refresh_token": "mcp-refresh-token",
+        "token_type": "bearer",
+        "oauth_client_id": "vercel-registered-client-id",
+        "oauth_resource": "https://mcp.vercel.com/",
+    }
 
 
 def test_notion_authorize_and_callback_use_mcp_flow_context_cookie(
@@ -223,6 +283,7 @@ def test_notion_authorize_and_callback_use_mcp_flow_context_cookie(
             self.code_verifier = "notion-code-verifier"
             self.client_id = "registered-client-id"
             self.client_secret = "registered-client-secret"
+            self.resource = "https://mcp.notion.com"
 
     async def _prepare(**kwargs: Any) -> _PreparedAuthorization:
         return _PreparedAuthorization(
@@ -234,6 +295,7 @@ def test_notion_authorize_and_callback_use_mcp_flow_context_cookie(
         assert kwargs["client_id"] == "registered-client-id"
         assert kwargs["client_secret"] == "registered-client-secret"
         assert kwargs["code_verifier"] == "notion-code-verifier"
+        assert kwargs["resource"] == "https://mcp.notion.com"
         return (
             {
                 "access_token": "mcp-access-token",
@@ -287,6 +349,9 @@ def test_notion_authorize_and_callback_use_mcp_flow_context_cookie(
         "access_token": "mcp-access-token",
         "refresh_token": "mcp-refresh-token",
         "token_type": "bearer",
+        "oauth_client_id": "registered-client-id",
+        "oauth_client_secret": "registered-client-secret",
+        "oauth_resource": "https://mcp.notion.com",
     }
 
 
@@ -327,43 +392,43 @@ async def test_oauth_flow_prefers_request_host_over_localhost_config(
     app.dependency_overrides[get_current_user] = lambda: _OWNER
     captured: dict[str, Any] = {}
 
-    class _FakeResponse:
-        status_code = 200
+    class _PreparedAuthorization:
+        def __init__(self, authorize_url: str) -> None:
+            self.authorize_url = authorize_url
+            self.code_verifier = "vercel-code-verifier"
+            self.client_id = "vercel-registered-client-id"
+            self.client_secret = None
+            self.resource = "https://mcp.vercel.com/"
 
-        def json(self) -> dict[str, str]:
-            return {
+    async def _prepare(**kwargs: Any) -> _PreparedAuthorization:
+        captured["prepare_redirect_uri"] = kwargs["redirect_uri"]
+        return _PreparedAuthorization(
+            authorize_url=(
+                "https://vercel.com/oauth/authorize?redirect_uri="
+                + kwargs["redirect_uri"]
+                + "&state="
+                + kwargs["state"]
+            )
+        )
+
+    async def _exchange(**kwargs: Any) -> tuple[dict[str, str], list[str] | None]:
+        captured["exchange_kwargs"] = kwargs
+        return (
+            {
                 "access_token": "vercel-access-token",
                 "refresh_token": "vercel-refresh-token",
                 "token_type": "bearer",
-            }
-
-    class _FakeAsyncClient:
-        def __init__(self, *, timeout: float) -> None:
-            assert timeout == 15.0
-
-        async def __aenter__(self) -> Any:
-            return self
-
-        async def __aexit__(self, exc_type: object, exc: object, tb: object) -> None:
-            return None
-
-        async def post(
-            self,
-            url: str,
-            *,
-            data: dict[str, str] | None = None,
-            json: dict[str, str] | None = None,
-            headers: dict[str, str],
-        ) -> _FakeResponse:
-            captured["url"] = url
-            captured["data"] = data
-            captured["json"] = json
-            captured["headers"] = headers
-            return _FakeResponse()
+            },
+            ["openid", "offline_access"],
+        )
 
     monkeypatch.setattr(
-        "pixie_for_pm.web.providers.oauth.httpx.AsyncClient",
-        _FakeAsyncClient,
+        "pixie_for_pm.web.routes.connection_routes.prepare_vercel_mcp_authorization",
+        _prepare,
+    )
+    monkeypatch.setattr(
+        "pixie_for_pm.web.routes.connection_routes.exchange_vercel_mcp_code",
+        _exchange,
     )
 
     client = TestClient(app, base_url="https://pixie-preview.vercel.app")
@@ -376,7 +441,6 @@ async def test_oauth_flow_prefers_request_host_over_localhost_config(
 
     authorize_query = parse_qs(urlsplit(authorize_response.headers["Location"]).query)
     state = authorize_query["state"][0]
-    code_verifier = client.cookies.get("_oauth_pkce_verifier")
 
     callback_response = client.get(
         "/api/connections/oauth/callback",
@@ -391,14 +455,16 @@ async def test_oauth_flow_prefers_request_host_over_localhost_config(
     assert authorize_query["redirect_uri"] == [
         "https://pixie-preview.vercel.app/api/connections/oauth/callback"
     ]
-    assert captured["url"] == "https://api.vercel.com/login/oauth/token"
-    assert captured["data"] == {
-        "grant_type": "authorization_code",
+    assert captured["prepare_redirect_uri"] == (
+        "https://pixie-preview.vercel.app/api/connections/oauth/callback"
+    )
+    assert captured["exchange_kwargs"] == {
         "code": "code-123",
         "redirect_uri": "https://pixie-preview.vercel.app/api/connections/oauth/callback",
-        "client_id": "vercel-id",
-        "client_secret": "vercel-secret",
-        "code_verifier": code_verifier,
+        "code_verifier": "vercel-code-verifier",
+        "client_id": "vercel-registered-client-id",
+        "client_secret": None,
+        "resource": "https://mcp.vercel.com/",
     }
     assert callback_response.status_code == 302
     assert callback_response.headers["Location"] == (

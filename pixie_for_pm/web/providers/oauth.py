@@ -4,6 +4,7 @@ import base64
 import hashlib
 import hmac
 import json
+from collections.abc import Mapping
 from dataclasses import dataclass
 from secrets import token_urlsafe
 from typing import Protocol
@@ -36,6 +37,8 @@ class OAuthMetadata:
     authorization_endpoint: str
     token_endpoint: str
     registration_endpoint: str | None = None
+    resource: str | None = None
+    scopes_supported: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -44,6 +47,7 @@ class NotionMcpAuthorization:
     code_verifier: str
     client_id: str
     client_secret: str | None = None
+    resource: str | None = None
 
 
 class OAuthService(Protocol):
@@ -193,32 +197,34 @@ async def prepare_notion_mcp_authorization(
     client_name: str,
     client_uri: str | None = None,
 ) -> NotionMcpAuthorization:
-    metadata = await _discover_oauth_metadata("https://mcp.notion.com/mcp")
-    registration = await _register_dynamic_client(
-        metadata,
+    return await _prepare_mcp_authorization(
+        mcp_server_url="https://mcp.notion.com/mcp",
+        state=state,
         redirect_uri=redirect_uri,
         client_name=client_name,
         client_uri=client_uri,
+        prompt="consent",
     )
-    code_verifier = generate_pkce_code_verifier()
-    code_challenge = build_pkce_code_challenge(code_verifier)
-    authorize_url = _append_query_parameters(
-        metadata.authorization_endpoint,
-        {
-            "response_type": "code",
-            "client_id": registration["client_id"],
-            "redirect_uri": redirect_uri,
-            "state": state,
-            "code_challenge": code_challenge,
-            "code_challenge_method": "S256",
-            "prompt": "consent",
-        },
-    )
-    return NotionMcpAuthorization(
-        authorize_url=authorize_url,
-        code_verifier=code_verifier,
-        client_id=registration["client_id"],
-        client_secret=registration.get("client_secret"),
+
+
+async def prepare_vercel_mcp_authorization(
+    *,
+    state: str,
+    redirect_uri: str,
+    client_name: str,
+    client_uri: str | None = None,
+    client_id: str | None = None,
+    client_secret: str | None = None,
+) -> NotionMcpAuthorization:
+    return await _prepare_mcp_authorization(
+        mcp_server_url="https://mcp.vercel.com",
+        state=state,
+        redirect_uri=redirect_uri,
+        client_name=client_name,
+        client_uri=client_uri,
+        scopes=("openid", "offline_access"),
+        client_id=client_id,
+        client_secret=client_secret,
     )
 
 
@@ -229,8 +235,127 @@ async def exchange_notion_mcp_code(
     code_verifier: str,
     client_id: str,
     client_secret: str | None = None,
+    resource: str | None = None,
 ) -> tuple[dict[str, str], list[str] | None]:
-    metadata = await _discover_oauth_metadata("https://mcp.notion.com/mcp")
+    return await _exchange_mcp_code(
+        mcp_server_url="https://mcp.notion.com/mcp",
+        code=code,
+        redirect_uri=redirect_uri,
+        code_verifier=code_verifier,
+        client_id=client_id,
+        client_secret=client_secret,
+        resource=resource,
+        provider="notion",
+    )
+
+
+async def exchange_vercel_mcp_code(
+    *,
+    code: str,
+    redirect_uri: str,
+    code_verifier: str,
+    client_id: str,
+    client_secret: str | None = None,
+    resource: str | None = None,
+) -> tuple[dict[str, str], list[str] | None]:
+    return await _exchange_mcp_code(
+        mcp_server_url="https://mcp.vercel.com",
+        code=code,
+        redirect_uri=redirect_uri,
+        code_verifier=code_verifier,
+        client_id=client_id,
+        client_secret=client_secret,
+        resource=resource,
+        provider="vercel",
+    )
+
+
+async def refresh_notion_mcp_token(
+    credentials: dict[str, str] | Mapping[str, str],
+) -> tuple[dict[str, str], list[str] | None]:
+    return await _refresh_mcp_token(
+        mcp_server_url="https://mcp.notion.com/mcp",
+        credentials=credentials,
+        provider="notion",
+    )
+
+
+async def refresh_vercel_mcp_token(
+    credentials: dict[str, str] | Mapping[str, str],
+) -> tuple[dict[str, str], list[str] | None]:
+    return await _refresh_mcp_token(
+        mcp_server_url="https://mcp.vercel.com",
+        credentials=credentials,
+        provider="vercel",
+    )
+
+
+async def _prepare_mcp_authorization(
+    *,
+    mcp_server_url: str,
+    state: str,
+    redirect_uri: str,
+    client_name: str,
+    client_uri: str | None,
+    scopes: tuple[str, ...] = (),
+    prompt: str | None = None,
+    client_id: str | None = None,
+    client_secret: str | None = None,
+) -> NotionMcpAuthorization:
+    metadata = await _discover_oauth_metadata(mcp_server_url)
+    resolved_client_id = client_id
+    resolved_client_secret = client_secret
+    if resolved_client_id is None or resolved_client_id.strip() == "":
+        registration = await _register_dynamic_client(
+            metadata,
+            redirect_uri=redirect_uri,
+            client_name=client_name,
+            client_uri=client_uri,
+        )
+        resolved_client_id = registration["client_id"]
+        resolved_client_secret = registration.get("client_secret")
+    code_verifier = generate_pkce_code_verifier()
+    code_challenge = build_pkce_code_challenge(code_verifier)
+    parameters = {
+        "response_type": "code",
+        "client_id": resolved_client_id,
+        "redirect_uri": redirect_uri,
+        "state": state,
+        "code_challenge": code_challenge,
+        "code_challenge_method": "S256",
+    }
+    if metadata.resource is not None:
+        parameters["resource"] = metadata.resource
+    if scopes:
+        parameters["scope"] = " ".join(scopes)
+    if prompt is not None:
+        parameters["prompt"] = prompt
+
+    authorize_url = _append_query_parameters(
+        metadata.authorization_endpoint,
+        parameters,
+    )
+    return NotionMcpAuthorization(
+        authorize_url=authorize_url,
+        code_verifier=code_verifier,
+        client_id=resolved_client_id,
+        client_secret=resolved_client_secret,
+        resource=metadata.resource,
+    )
+
+
+async def _exchange_mcp_code(
+    *,
+    mcp_server_url: str,
+    code: str,
+    redirect_uri: str,
+    code_verifier: str,
+    client_id: str,
+    client_secret: str | None,
+    resource: str | None,
+    provider: str,
+) -> tuple[dict[str, str], list[str] | None]:
+    metadata = await _discover_oauth_metadata(mcp_server_url)
     payload = {
         "grant_type": "authorization_code",
         "code": code,
@@ -238,6 +363,51 @@ async def exchange_notion_mcp_code(
         "redirect_uri": redirect_uri,
         "code_verifier": code_verifier,
     }
+    if client_secret is not None:
+        payload["client_secret"] = client_secret
+    resolved_resource = resource or metadata.resource
+    if resolved_resource is not None:
+        payload["resource"] = resolved_resource
+
+    async with httpx.AsyncClient(timeout=15.0) as client:
+        response = await client.post(
+            metadata.token_endpoint,
+            data=payload,
+            headers={
+                "Accept": "application/json",
+                "Content-Type": "application/x-www-form-urlencoded",
+            },
+        )
+    if response.status_code >= 400:
+        raise OAuthProviderError(
+            f"OAuth token exchange failed for provider '{provider}'."
+        )
+
+    return _parse_token_response(response)
+
+
+async def _refresh_mcp_token(
+    *,
+    mcp_server_url: str,
+    credentials: dict[str, str] | Mapping[str, str],
+    provider: str,
+) -> tuple[dict[str, str], list[str] | None]:
+    refresh_token = credentials.get("refresh_token")
+    client_id = credentials.get("oauth_client_id")
+    resource = credentials.get("oauth_resource")
+    if refresh_token is None or client_id is None or resource is None:
+        raise OAuthProviderError(
+            f"OAuth refresh failed for provider '{provider}': missing hosted MCP metadata."
+        )
+
+    metadata = await _discover_oauth_metadata(mcp_server_url)
+    payload = {
+        "grant_type": "refresh_token",
+        "refresh_token": refresh_token,
+        "client_id": client_id,
+        "resource": resource,
+    }
+    client_secret = credentials.get("oauth_client_secret")
     if client_secret is not None:
         payload["client_secret"] = client_secret
 
@@ -251,7 +421,9 @@ async def exchange_notion_mcp_code(
             },
         )
     if response.status_code >= 400:
-        raise OAuthProviderError("OAuth token exchange failed for provider 'notion'.")
+        raise OAuthProviderError(
+            f"OAuth refresh failed for provider '{provider}'."
+        )
 
     return _parse_token_response(response)
 
@@ -392,6 +564,18 @@ async def _discover_oauth_metadata(mcp_server_url: str) -> OAuthMetadata:
                 "OAuth protected resource returned no auth server."
             )
 
+        resource = protected_resource.get("resource")
+        if resource is not None and not isinstance(resource, str):
+            raise OAuthProviderError("OAuth protected resource is invalid.")
+        scopes_supported_raw = protected_resource.get("scopes_supported")
+        scopes_supported: tuple[str, ...] = ()
+        if isinstance(scopes_supported_raw, list):
+            scopes_supported = tuple(
+                scope
+                for scope in scopes_supported_raw
+                if isinstance(scope, str) and scope.strip() != ""
+            )
+
         metadata_url = _append_path(
             authorization_servers[0], "/.well-known/oauth-authorization-server"
         )
@@ -417,6 +601,8 @@ async def _discover_oauth_metadata(mcp_server_url: str) -> OAuthMetadata:
         authorization_endpoint=authorization_endpoint,
         token_endpoint=token_endpoint,
         registration_endpoint=registration_endpoint,
+        resource=resource if isinstance(resource, str) and resource.strip() != "" else None,
+        scopes_supported=scopes_supported,
     )
 
 

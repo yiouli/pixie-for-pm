@@ -168,6 +168,34 @@ class _RuntimeFailingProvider(IntegrationRuntimeProvider):
         )
 
 
+class _RefreshingProvider(IntegrationRuntimeProvider):
+    def __init__(self) -> None:
+        self.calls: list[dict[str, str]] = []
+
+    async def load_tools(
+        self,
+        *,
+        credentials: Mapping[str, str],
+        trigger: DiscordTriggerContext,
+    ) -> tuple[BaseTool, ...]:
+        del trigger
+        mutable_credentials = credentials
+        assert isinstance(mutable_credentials, dict)
+        self.calls.append(dict(mutable_credentials))
+        mutable_credentials["access_token"] = "refreshed-notion-token"
+
+        async def _search(query: str) -> str:
+            return f"ok:{mutable_credentials['access_token']}:{query}"
+
+        return (
+            StructuredTool.from_function(
+                coroutine=_search,
+                name="notion_search",
+                description="Search Notion.",
+            ),
+        )
+
+
 @pytest.mark.asyncio
 async def test_initializer_builds_langgraph_tools_for_all_connected_integrations() -> (
     None
@@ -323,6 +351,47 @@ async def test_initializer_records_failed_provider_initialization() -> None:
             ),
         )
     )
+
+
+@pytest.mark.asyncio
+async def test_initializer_persists_provider_refreshed_credentials() -> None:
+    store = InMemoryConnectionStore()
+    cipher = CredentialCipher(_FERNET_KEY)
+    provider = _RefreshingProvider()
+
+    server, _ = await store.claim_server("guild-refresh", "user-5")
+    await store.upsert_connection(
+        server.id,
+        "notion",
+        cipher.encrypt_credentials({"access_token": "expired-notion-token"}),
+        scopes=["read_content"],
+        status="active",
+    )
+
+    initializer = IntegrationToolsetInitializer(
+        store=store,
+        cipher=cipher,
+        providers={"notion": provider},
+    )
+
+    await initializer.initialize(
+        DiscordTriggerContext(
+            "guild-refresh",
+            "user-55",
+            333,
+            None,
+            444,
+            "channel-333-message-444",
+            "reply_to_bot",
+        )
+    )
+    connection = await store.get_connection(server.id, "notion")
+
+    assert provider.calls == [{"access_token": "expired-notion-token"}]
+    assert connection is not None
+    assert cipher.decrypt_credentials(connection.credentials_encrypted) == {
+        "access_token": "refreshed-notion-token"
+    }
 
 
 @pytest.mark.asyncio

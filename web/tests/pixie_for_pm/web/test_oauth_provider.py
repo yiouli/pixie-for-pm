@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import base64
-import hashlib
 from typing import Any
 from urllib.parse import parse_qs, urlsplit
 
@@ -11,7 +10,9 @@ from pixie_for_pm.config.settings import load_settings
 from pixie_for_pm.web.providers.oauth import (
     HttpOAuthService,
     exchange_notion_mcp_code,
+    exchange_vercel_mcp_code,
     prepare_notion_mcp_authorization,
+    prepare_vercel_mcp_authorization,
 )
 
 
@@ -84,7 +85,10 @@ async def test_prepare_notion_mcp_authorization_uses_discovery_registration_and_
             if url == "https://mcp.notion.com/.well-known/oauth-protected-resource":
                 return _FakeResponse(
                     200,
-                    {"authorization_servers": ["https://mcp.notion.com"]},
+                    {
+                        "resource": "https://mcp.notion.com",
+                        "authorization_servers": ["https://mcp.notion.com"],
+                    },
                 )
             if url == "https://mcp.notion.com/.well-known/oauth-authorization-server":
                 return _FakeResponse(
@@ -149,11 +153,13 @@ async def test_prepare_notion_mcp_authorization_uses_discovery_registration_and_
     }
     assert prepared.client_id == "registered-client-id"
     assert prepared.client_secret == "registered-client-secret"
+    assert prepared.resource == "https://mcp.notion.com"
     assert prepared.code_verifier != ""
     assert query["client_id"] == ["registered-client-id"]
     assert query["redirect_uri"] == [
         "https://api.pixie.test/api/connections/oauth/callback"
     ]
+    assert query["resource"] == ["https://mcp.notion.com"]
     assert query["state"] == ["signed-state"]
     assert query["code_challenge_method"] == ["S256"]
     assert query["prompt"] == ["consent"]
@@ -193,7 +199,10 @@ async def test_exchange_notion_mcp_code_uses_discovered_token_endpoint_and_pkce(
             if url == "https://mcp.notion.com/.well-known/oauth-protected-resource":
                 return _FakeResponse(
                     200,
-                    {"authorization_servers": ["https://mcp.notion.com"]},
+                    {
+                        "resource": "https://mcp.notion.com",
+                        "authorization_servers": ["https://mcp.notion.com"],
+                    },
                 )
             if url == "https://mcp.notion.com/.well-known/oauth-authorization-server":
                 return _FakeResponse(
@@ -256,6 +265,7 @@ async def test_exchange_notion_mcp_code_uses_discovered_token_endpoint_and_pkce(
         "client_secret": "registered-client-secret",
         "redirect_uri": "https://api.pixie.test/api/connections/oauth/callback",
         "code_verifier": "notion-code-verifier",
+        "resource": "https://mcp.notion.com",
     }
     assert captured["post_headers"] == {
         "Accept": "application/json",
@@ -332,46 +342,23 @@ async def test_notion_token_exchange_uses_basic_auth_and_json_body(
     }
 
 
-def test_vercel_authorize_url_includes_pkce_challenge() -> None:
-    service = HttpOAuthService(load_settings(_vercel_settings()))
-    verifier = "vercel-test-verifier"
-
-    authorize_url = service.get_authorize_url(
-        "vercel",
-        "signed-state",
-        code_challenge=base64.urlsafe_b64encode(
-            hashlib.sha256(verifier.encode()).digest()
-        )
-        .decode()
-        .rstrip("="),
-    )
-    query = parse_qs(urlsplit(authorize_url).query)
-
-    assert query["client_id"] == ["vercel-client-id"]
-    assert query["redirect_uri"] == [
-        "https://api.pixie.test/api/connections/oauth/callback"
-    ]
-    assert query["state"] == ["signed-state"]
-    assert query["code_challenge_method"] == ["S256"]
-    assert "code_challenge" in query
-
-
 @pytest.mark.asyncio
-async def test_vercel_token_exchange_uses_login_endpoint_and_pkce_verifier(
+async def test_prepare_vercel_mcp_authorization_prefers_configured_client_id(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    service = HttpOAuthService(load_settings(_vercel_settings()))
     captured: dict[str, Any] = {}
 
     class _FakeResponse:
-        status_code = 200
+        def __init__(self, status_code: int, payload: dict[str, Any]) -> None:
+            self.status_code = status_code
+            self._payload = payload
 
-        def json(self) -> dict[str, str]:
-            return {
-                "access_token": "vercel-access-token",
-                "refresh_token": "vercel-refresh-token",
-                "token_type": "bearer",
-            }
+        def json(self) -> dict[str, Any]:
+            return self._payload
+
+        @property
+        def text(self) -> str:
+            return str(self._payload)
 
     class _FakeAsyncClient:
         def __init__(self, *, timeout: float) -> None:
@@ -382,6 +369,119 @@ async def test_vercel_token_exchange_uses_login_endpoint_and_pkce_verifier(
 
         async def __aexit__(self, exc_type: object, exc: object, tb: object) -> None:
             return None
+
+        async def get(self, url: str) -> _FakeResponse:
+            captured.setdefault("gets", []).append(url)
+            if url == "https://mcp.vercel.com/.well-known/oauth-protected-resource":
+                return _FakeResponse(
+                    200,
+                    {
+                        "resource": "https://mcp.vercel.com/",
+                        "authorization_servers": ["https://mcp.vercel.com"],
+                        "scopes_supported": ["openid", "offline_access"],
+                    },
+                )
+            if url == "https://mcp.vercel.com/.well-known/oauth-authorization-server":
+                return _FakeResponse(
+                    200,
+                    {
+                        "authorization_endpoint": "https://vercel.com/oauth/authorize",
+                        "token_endpoint": "https://vercel.com/api/login/oauth/token",
+                        "registration_endpoint": "https://vercel.com/api/login/oauth/register",
+                    },
+                )
+            raise AssertionError(url)
+
+        async def post(
+            self,
+            url: str,
+            *,
+            data: dict[str, str] | None = None,
+            json: dict[str, str] | None = None,
+            headers: dict[str, str],
+        ) -> _FakeResponse:
+            del url, data, json, headers
+            raise AssertionError("dynamic registration should not run")
+
+    monkeypatch.setattr(
+        "pixie_for_pm.web.providers.oauth.httpx.AsyncClient",
+        _FakeAsyncClient,
+    )
+
+    prepared = await prepare_vercel_mcp_authorization(
+        state="signed-state",
+        redirect_uri="http://localhost:8000/api/connections/oauth/callback",
+        client_name="Pixie",
+        client_uri="http://localhost:8000",
+        client_id="configured-vercel-client-id",
+        client_secret="configured-vercel-client-secret",
+    )
+    query = parse_qs(urlsplit(prepared.authorize_url).query)
+
+    assert captured["gets"] == [
+        "https://mcp.vercel.com/.well-known/oauth-protected-resource",
+        "https://mcp.vercel.com/.well-known/oauth-authorization-server",
+    ]
+    assert prepared.client_id == "configured-vercel-client-id"
+    assert prepared.client_secret == "configured-vercel-client-secret"
+    assert prepared.resource == "https://mcp.vercel.com/"
+    assert query["client_id"] == ["configured-vercel-client-id"]
+    assert query["redirect_uri"] == [
+        "http://localhost:8000/api/connections/oauth/callback"
+    ]
+    assert query["resource"] == ["https://mcp.vercel.com/"]
+    assert query["scope"] == ["openid offline_access"]
+
+
+@pytest.mark.asyncio
+async def test_prepare_vercel_mcp_authorization_uses_discovery_registration_and_pkce(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    captured: dict[str, Any] = {}
+
+    class _FakeResponse:
+        def __init__(self, status_code: int, payload: dict[str, Any]) -> None:
+            self.status_code = status_code
+            self._payload = payload
+
+        def json(self) -> dict[str, Any]:
+            return self._payload
+
+        @property
+        def text(self) -> str:
+            return str(self._payload)
+
+    class _FakeAsyncClient:
+        def __init__(self, *, timeout: float) -> None:
+            assert timeout == 15.0
+
+        async def __aenter__(self) -> Any:
+            return self
+
+        async def __aexit__(self, exc_type: object, exc: object, tb: object) -> None:
+            return None
+
+        async def get(self, url: str) -> _FakeResponse:
+            captured.setdefault("gets", []).append(url)
+            if url == "https://mcp.vercel.com/.well-known/oauth-protected-resource":
+                return _FakeResponse(
+                    200,
+                    {
+                        "resource": "https://mcp.vercel.com/",
+                        "authorization_servers": ["https://mcp.vercel.com"],
+                        "scopes_supported": ["openid", "offline_access"],
+                    },
+                )
+            if url == "https://mcp.vercel.com/.well-known/oauth-authorization-server":
+                return _FakeResponse(
+                    200,
+                    {
+                        "authorization_endpoint": "https://vercel.com/oauth/authorize",
+                        "token_endpoint": "https://vercel.com/api/login/oauth/token",
+                        "registration_endpoint": "https://vercel.com/api/login/oauth/register",
+                    },
+                )
+            raise AssertionError(url)
 
         async def post(
             self,
@@ -395,26 +495,141 @@ async def test_vercel_token_exchange_uses_login_endpoint_and_pkce_verifier(
             captured["data"] = data
             captured["json"] = json
             captured["headers"] = headers
-            return _FakeResponse()
+            return _FakeResponse(200, {"client_id": "vercel-client-id"})
 
     monkeypatch.setattr(
         "pixie_for_pm.web.providers.oauth.httpx.AsyncClient",
         _FakeAsyncClient,
     )
 
-    payload, scopes = await service.exchange_code(
-        "vercel",
-        "temporary-code",
+    prepared = await prepare_vercel_mcp_authorization(
+        state="signed-state",
+        redirect_uri="https://api.pixie.test/api/connections/oauth/callback",
+        client_name="Pixie",
+        client_uri="https://app.pixie.test",
+    )
+    query = parse_qs(urlsplit(prepared.authorize_url).query)
+
+    assert captured["gets"] == [
+        "https://mcp.vercel.com/.well-known/oauth-protected-resource",
+        "https://mcp.vercel.com/.well-known/oauth-authorization-server",
+    ]
+    assert captured["url"] == "https://vercel.com/api/login/oauth/register"
+    assert captured["headers"] == {
+        "Content-Type": "application/json",
+        "Accept": "application/json",
+    }
+    assert captured["json"] == {
+        "client_name": "Pixie",
+        "client_uri": "https://app.pixie.test",
+        "redirect_uris": ["https://api.pixie.test/api/connections/oauth/callback"],
+        "grant_types": ["authorization_code", "refresh_token"],
+        "response_types": ["code"],
+        "token_endpoint_auth_method": "none",
+    }
+    assert prepared.client_id == "vercel-client-id"
+    assert prepared.client_secret is None
+    assert prepared.resource == "https://mcp.vercel.com/"
+    assert query["client_id"] == ["vercel-client-id"]
+    assert query["redirect_uri"] == [
+        "https://api.pixie.test/api/connections/oauth/callback"
+    ]
+    assert query["resource"] == ["https://mcp.vercel.com/"]
+    assert query["scope"] == ["openid offline_access"]
+    assert query["state"] == ["signed-state"]
+    assert query["code_challenge_method"] == ["S256"]
+    assert "code_challenge" in query
+
+
+@pytest.mark.asyncio
+async def test_exchange_vercel_mcp_code_uses_discovered_token_endpoint_and_pkce(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    captured: dict[str, Any] = {}
+
+    class _FakeResponse:
+        def __init__(self, status_code: int, payload: dict[str, Any]) -> None:
+            self.status_code = status_code
+            self._payload = payload
+
+        def json(self) -> dict[str, Any]:
+            return self._payload
+
+        @property
+        def text(self) -> str:
+            return str(self._payload)
+
+    class _FakeAsyncClient:
+        def __init__(self, *, timeout: float) -> None:
+            assert timeout == 15.0
+
+        async def __aenter__(self) -> Any:
+            return self
+
+        async def __aexit__(self, exc_type: object, exc: object, tb: object) -> None:
+            return None
+
+        async def get(self, url: str) -> _FakeResponse:
+            captured.setdefault("gets", []).append(url)
+            if url == "https://mcp.vercel.com/.well-known/oauth-protected-resource":
+                return _FakeResponse(
+                    200,
+                    {"authorization_servers": ["https://mcp.vercel.com"]},
+                )
+            if url == "https://mcp.vercel.com/.well-known/oauth-authorization-server":
+                return _FakeResponse(
+                    200,
+                    {
+                        "authorization_endpoint": "https://vercel.com/oauth/authorize",
+                        "token_endpoint": "https://vercel.com/api/login/oauth/token",
+                    },
+                )
+            raise AssertionError(url)
+
+        async def post(
+            self,
+            url: str,
+            *,
+            data: dict[str, str] | None = None,
+            json: dict[str, str] | None = None,
+            headers: dict[str, str],
+        ) -> _FakeResponse:
+            captured["url"] = url
+            captured["data"] = data
+            captured["json"] = json
+            captured["headers"] = headers
+            return _FakeResponse(
+                200,
+                {
+                    "access_token": "vercel-access-token",
+                    "refresh_token": "vercel-refresh-token",
+                    "token_type": "bearer",
+                    "scope": "openid offline_access",
+                },
+            )
+
+    monkeypatch.setattr(
+        "pixie_for_pm.web.providers.oauth.httpx.AsyncClient",
+        _FakeAsyncClient,
+    )
+
+    payload, scopes = await exchange_vercel_mcp_code(
+        code="temporary-code",
+        redirect_uri="https://api.pixie.test/api/connections/oauth/callback",
         code_verifier="vercel-test-verifier",
+        client_id="vercel-client-id",
+        client_secret="vercel-client-secret",
+        resource="https://mcp.vercel.com/",
     )
 
     assert payload == {
         "access_token": "vercel-access-token",
         "refresh_token": "vercel-refresh-token",
         "token_type": "bearer",
+        "scope": "openid offline_access",
     }
-    assert scopes is None
-    assert captured["url"] == "https://api.vercel.com/login/oauth/token"
+    assert scopes == ["openid", "offline_access"]
+    assert captured["url"] == "https://vercel.com/api/login/oauth/token"
     assert captured["json"] is None
     assert captured["data"] == {
         "grant_type": "authorization_code",
@@ -423,5 +638,9 @@ async def test_vercel_token_exchange_uses_login_endpoint_and_pkce_verifier(
         "client_id": "vercel-client-id",
         "client_secret": "vercel-client-secret",
         "code_verifier": "vercel-test-verifier",
+        "resource": "https://mcp.vercel.com/",
     }
-    assert captured["headers"] == {"Accept": "application/json"}
+    assert captured["headers"] == {
+        "Accept": "application/json",
+        "Content-Type": "application/x-www-form-urlencoded",
+    }

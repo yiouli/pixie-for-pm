@@ -290,6 +290,10 @@ PROVIDERS: dict[str, ProviderConfig] = { ... }
 
 Notion-specific OAuth behavior: the authorize URL must include `owner=user`, and the token exchange must use HTTP Basic authentication with a JSON request body.
 
+Hosted MCP-specific OAuth behavior: Notion MCP and Vercel MCP do not behave like generic provider OAuth apps. The server must discover OAuth metadata from the MCP protected resource, dynamically register a client for the callback URL, request a token bound to the MCP `resource`, and persist the registered client metadata alongside the refresh token so expired MCP access tokens can be refreshed later.
+
+For Vercel MCP, when the application already has a configured `VERCEL_CLIENT_ID` and `VERCEL_CLIENT_SECRET`, the server should prefer that configured OAuth app for the authorize and token exchange flow so the redirect URI continues to match the callback URLs registered in Vercel.
+
 ### 3.1 OAuth2 Flow (Notion, GitHub, Vercel, Airtable)
 
 ```text
@@ -298,14 +302,16 @@ Notion-specific OAuth behavior: the authorize URL must include `owner=user`, and
 3. Server validates user owns this server
 4. Server generates HMAC-signed state param (encodes server_id + user_id + random nonce)
 5. Server 302-redirects to provider's authorize URL with client_id, redirect_uri, state, scopes
-  - Notion additionally requires `owner=user` on the authorize URL.
+  - Notion MCP and Vercel MCP first discover the provider's hosted MCP OAuth metadata, dynamically register a client for the current callback URL, store that client metadata in a short-lived HttpOnly cookie, and bind the authorize request to the MCP `resource` value.
   - When the configured callback URL points at localhost but the incoming request is on a non-local host, the server derives the redirect URI from the live request so preview and deployed environments do not reuse local callback settings.
-  - Vercel additionally requires PKCE, so the server generates a code verifier, stores it in a short-lived HttpOnly cookie, and sends the corresponding S256 code challenge on the authorize request.
+  - Hosted MCP providers use PKCE, so the server generates a code verifier and sends the corresponding S256 code challenge on the authorize request.
+  - Vercel MCP requests the hosted-MCP scopes `openid offline_access` instead of project REST API scopes.
+  - GitHub and Airtable continue to use the configured provider OAuth app settings directly.
 6. User authorizes in provider
 7. Provider redirects to: GET /api/connections/oauth/callback?code=...&state=...
 8. Server validates state signature, exchanges code for tokens
-  - Notion exchanges the code with an HTTP Basic `Authorization` header and a JSON request body.
-  - Vercel exchanges the code against `https://api.vercel.com/login/oauth/token` and must include the original PKCE code verifier.
+  - Hosted MCP providers exchange the code against the discovered token endpoint with form-encoded PKCE parameters and the same MCP `resource` value.
+  - The encrypted credential payload stores the MCP OAuth client metadata needed for refresh, not just the access token.
 9. Server encrypts tokens with Fernet, upserts into connections table
 10. Server redirects to: {WEB_APP_URL}/settings?server_id=...&connected={provider}
   - When `WEB_APP_URL` is unset or still points at localhost on a non-local request host, the server redirects back to the current request origin instead.
@@ -350,6 +356,19 @@ OAuth2 providers:
   "refresh_token": "...",
   "token_type": "bearer",
   "expires_at": "..."
+}
+```
+
+Hosted MCP OAuth providers additionally persist the dynamically registered client metadata required for refresh:
+
+```json
+{
+  "access_token": "...",
+  "refresh_token": "...",
+  "token_type": "bearer",
+  "oauth_client_id": "...",
+  "oauth_client_secret": "...",
+  "oauth_resource": "https://mcp.notion.com"
 }
 ```
 

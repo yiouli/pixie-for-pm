@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from collections.abc import Mapping
 
 import httpx
 import pytest
@@ -93,6 +94,112 @@ async def test_hosted_mcp_provider_loads_remote_tools_with_bearer_auth(
             },
         )
     ]
+
+
+@pytest.mark.asyncio
+async def test_hosted_mcp_provider_refreshes_unauthorized_tokens_and_retries() -> None:
+    calls: list[dict[str, object]] = []
+
+    async def _loader(
+        session: object | None,
+        **kwargs: object,
+    ) -> list[StructuredTool]:
+        del session
+        calls.append(kwargs)
+        if len(calls) == 1:
+            request = httpx.Request("POST", "https://mcp.notion.com/mcp")
+            response = httpx.Response(401, request=request)
+            raise httpx.HTTPStatusError(
+                "401 Unauthorized",
+                request=request,
+                response=response,
+            )
+        return [
+            StructuredTool.from_function(
+                coroutine=lambda **_: pytest.fail("tool should not be invoked"),
+                name="search",
+                description="Remote tool",
+            )
+        ]
+
+    async def _refresh(
+        credentials: Mapping[str, str],
+    ) -> tuple[dict[str, str], list[str] | None]:
+        assert credentials["refresh_token"] == "notion-refresh-token"
+        assert credentials["oauth_client_id"] == "registered-client-id"
+        assert credentials["oauth_resource"] == "https://mcp.notion.com"
+        return (
+            {
+                "access_token": "refreshed-notion-token",
+                "refresh_token": "next-refresh-token",
+            },
+            ["read", "write"],
+        )
+
+    provider = HostedMcpToolProvider(
+        provider_id="notion",
+        server_url="https://mcp.notion.com/mcp",
+        token_field="access_token",
+        tool_loader=_loader,
+        token_refresher=_refresh,
+    )
+    credentials = {
+        "access_token": "expired-notion-token",
+        "refresh_token": "notion-refresh-token",
+        "oauth_client_id": "registered-client-id",
+        "oauth_resource": "https://mcp.notion.com",
+    }
+
+    tools = await provider.load_tools(credentials=credentials, trigger=_trigger())
+
+    assert [tool.name for tool in tools] == ["search"]
+    assert [
+        call["connection"]
+        for call in calls
+    ] == [
+        {
+            "transport": "streamable_http",
+            "url": "https://mcp.notion.com/mcp",
+            "headers": {"Authorization": "Bearer expired-notion-token"},
+        },
+        {
+            "transport": "streamable_http",
+            "url": "https://mcp.notion.com/mcp",
+            "headers": {"Authorization": "Bearer refreshed-notion-token"},
+        },
+    ]
+    assert credentials["access_token"] == "refreshed-notion-token"
+    assert credentials["refresh_token"] == "next-refresh-token"
+
+
+@pytest.mark.asyncio
+async def test_hosted_mcp_provider_requires_reconnect_for_legacy_unauthorized_tokens() -> None:
+    async def _loader(
+        session: object | None,
+        **kwargs: object,
+    ) -> list[StructuredTool]:
+        del session, kwargs
+        request = httpx.Request("POST", "https://mcp.vercel.com")
+        response = httpx.Response(401, request=request)
+        raise httpx.HTTPStatusError(
+            "401 Unauthorized",
+            request=request,
+            response=response,
+        )
+
+    provider = HostedMcpToolProvider(
+        provider_id="vercel",
+        server_url="https://mcp.vercel.com",
+        token_field="access_token",
+        tool_loader=_loader,
+        token_refresher=lambda credentials: pytest.fail(str(credentials)),
+    )
+
+    with pytest.raises(RuntimeError, match="Reconnect Vercel"):
+        await provider.load_tools(
+            credentials={"access_token": "legacy-vercel-token"},
+            trigger=_trigger(),
+        )
 
 
 @pytest.mark.asyncio

@@ -46,16 +46,15 @@ async def run_deep_agent(
         context,
         execution_context_builder=execution_context_builder,
     )
-    agent = create_deep_agent(
-        model=_resolve_model(model, openai_api_key=openai_api_key),
-        tools=list(context.toolset.as_langgraph_tools()),
-        system_prompt=system_prompt,
-        checkpointer=False,
-        name=agent_name,
-    )
+    resolved_model = _resolve_model(model, openai_api_key=openai_api_key)
     try:
         result = await _invoke_agent_with_status_events(
-            agent=agent,
+            agent=_create_agent(
+                resolved_model=resolved_model,
+                context=context,
+                system_prompt=system_prompt,
+                agent_name=agent_name,
+            ),
             context=context,
             role=role,
             inputs={"messages": messages},
@@ -83,7 +82,12 @@ async def run_deep_agent(
         )
         try:
             result = await _invoke_agent_with_status_events(
-                agent=agent,
+                agent=_create_agent(
+                    resolved_model=resolved_model,
+                    context=context,
+                    system_prompt=system_prompt,
+                    agent_name=agent_name,
+                ),
                 context=context,
                 role=role,
                 inputs={
@@ -104,6 +108,22 @@ async def run_deep_agent(
             raise
     return _extract_final_response_text(
         cast(Sequence[BaseMessage], result.get("messages", []))
+    )
+
+
+def _create_agent(
+    *,
+    resolved_model: str | BaseChatModel,
+    context: WorkflowContext,
+    system_prompt: str,
+    agent_name: str,
+) -> Any:
+    return create_deep_agent(
+        model=resolved_model,
+        tools=list(context.toolset.as_langgraph_tools()),
+        system_prompt=system_prompt,
+        checkpointer=False,
+        name=agent_name,
     )
 
 

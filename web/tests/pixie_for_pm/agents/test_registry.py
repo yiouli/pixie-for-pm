@@ -256,10 +256,45 @@ async def test_product_manager_handler_delegates_demo_retention_questions_to_use
     assert "here's how i'm thinking" in execution.messages[0].content.lower()
     assert "user researcher" in execution.messages[0].content.lower()
     assert "three hypotheses" in execution.messages[0].content.lower()
+    assert "starting point:" not in execution.messages[0].content.lower()
     assert [handoff.target_agent for handoff in execution.handoffs] == [
         AgentRole.USER_RESEARCHER
     ]
     assert "retention_next_step_demo" in execution.handoffs[0].reason
+
+
+@pytest.mark.asyncio
+async def test_product_manager_retention_handoff_does_not_publish_directly() -> None:
+    handler = build_product_manager_handler(
+        model=_ToolCallingFakeListChatModel(responses=["unused"])
+    )
+    public_messages: list[str] = []
+
+    execution = await handler(
+        WorkflowContext(
+            thread_key="discord-thread-1",
+            current_agent=AgentRole.PRODUCT_MANAGER,
+            user_message=(
+                "It seems that feature X retention is low. What should we build "
+                "next to improve that?"
+            ),
+            transcript=(),
+            trigger=DiscordTriggerContext(
+                discord_server_id="discord-server-1",
+                discord_user_id="user-1",
+                channel_id=10,
+                thread_id="discord-thread-1",
+                message_id=99,
+                thread_key="discord-thread-1",
+                dispatch_reason="direct_bot_mention",
+            ),
+            toolset=AgentToolset(),
+            public_message_emitter=public_messages.append,
+        )
+    )
+
+    assert execution.messages
+    assert public_messages == []
 
 
 @pytest.mark.asyncio

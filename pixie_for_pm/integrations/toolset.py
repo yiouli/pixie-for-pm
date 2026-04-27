@@ -126,9 +126,10 @@ class IntegrationToolsetInitializer:
             if provider is None or runtime_provider is None:
                 continue
 
-            credentials = self._cipher.decrypt_credentials(
-                connection.credentials_encrypted
+            credentials = dict(
+                self._cipher.decrypt_credentials(connection.credentials_encrypted)
             )
+            original_credentials = dict(credentials)
             try:
                 provider_tools = await runtime_provider.load_tools(
                     credentials=credentials,
@@ -152,6 +153,15 @@ class IntegrationToolsetInitializer:
                     )
                 )
                 continue
+
+            if credentials != original_credentials:
+                await self._store.upsert_connection(
+                    server.id,
+                    connection.provider,
+                    self._cipher.encrypt_credentials(credentials),
+                    connection.scopes,
+                    connection.status,
+                )
 
             wrapped_tools = tuple(
                 self._wrap_tool(

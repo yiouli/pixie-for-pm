@@ -14,6 +14,10 @@ from pixie_for_pm.integrations.toolset import (
     DiscordTriggerContext,
     IntegrationRuntimeProvider,
 )
+from pixie_for_pm.web.providers.oauth import (
+    refresh_notion_mcp_token,
+    refresh_vercel_mcp_token,
+)
 
 
 class SearchInput(BaseModel):
@@ -42,6 +46,13 @@ class McpToolLoader(Protocol):
     ) -> Sequence[BaseTool]: ...
 
 
+class McpTokenRefresher(Protocol):
+    async def __call__(
+        self,
+        credentials: Mapping[str, str],
+    ) -> tuple[dict[str, str], list[str] | None]: ...
+
+
 class HostedMcpToolProvider(IntegrationRuntimeProvider):
     def __init__(
         self,
@@ -53,12 +64,14 @@ class HostedMcpToolProvider(IntegrationRuntimeProvider):
             Callable[[Mapping[str, str], DiscordTriggerContext], str] | None
         ) = None,
         tool_loader: McpToolLoader | None = None,
+        token_refresher: McpTokenRefresher | None = None,
     ) -> None:
         self._provider_id = provider_id
         self._server_url = server_url
         self._token_field = token_field
         self._resolve_url = resolve_url or (lambda _credentials, _trigger: server_url)
         self._tool_loader = tool_loader or load_mcp_tools
+        self._token_refresher = token_refresher
 
     async def load_tools(
         self,
@@ -77,13 +90,72 @@ class HostedMcpToolProvider(IntegrationRuntimeProvider):
             "url": self._resolve_url(credentials, trigger),
             "headers": {"Authorization": f"Bearer {token}"},
         }
-        tools = await self._tool_loader(
-            None,
-            connection=connection,
-            server_name=self._provider_id,
-            tool_name_prefix=True,
-        )
+        try:
+            tools = await self._tool_loader(
+                None,
+                connection=connection,
+                server_name=self._provider_id,
+                tool_name_prefix=True,
+            )
+        except Exception as exc:
+            if not _is_unauthorized_error(exc) or self._token_refresher is None:
+                raise
+            refreshed_credentials = await self._refresh_credentials(credentials)
+            if isinstance(credentials, dict):
+                credentials.clear()
+                credentials.update(refreshed_credentials)
+            connection = {
+                "transport": "streamable_http",
+                "url": self._resolve_url(refreshed_credentials, trigger),
+                "headers": {
+                    "Authorization": (
+                        f"Bearer {refreshed_credentials[self._token_field]}"
+                    )
+                },
+            }
+            tools = await self._tool_loader(
+                None,
+                connection=connection,
+                server_name=self._provider_id,
+                tool_name_prefix=True,
+            )
         return tuple(tools)
+
+    async def _refresh_credentials(
+        self,
+        credentials: Mapping[str, str],
+    ) -> dict[str, str]:
+        refresh_token = credentials.get("refresh_token")
+        client_id = credentials.get("oauth_client_id")
+        resource = credentials.get("oauth_resource")
+        if (
+            refresh_token is None
+            or refresh_token.strip() == ""
+            or client_id is None
+            or client_id.strip() == ""
+            or resource is None
+            or resource.strip() == ""
+        ):
+            provider_name = self._provider_id.capitalize()
+            raise RuntimeError(
+                f"Reconnect {provider_name} in Settings. Stored credentials were created "
+                "before hosted MCP OAuth support and cannot be refreshed."
+            )
+
+        token_refresher = self._token_refresher
+        if token_refresher is None:
+            raise RuntimeError("Hosted MCP token refresher is not configured.")
+
+        refreshed_payload, _ = await token_refresher(credentials)
+        refreshed_credentials = dict(credentials)
+        refreshed_credentials.update(refreshed_payload)
+        refreshed_credentials.setdefault("refresh_token", refresh_token)
+        refreshed_credentials.setdefault("oauth_client_id", client_id)
+        refreshed_credentials.setdefault("oauth_resource", resource)
+        client_secret = credentials.get("oauth_client_secret")
+        if client_secret is not None and client_secret.strip() != "":
+            refreshed_credentials.setdefault("oauth_client_secret", client_secret)
+        return refreshed_credentials
 
 
 class AirtableToolProvider(IntegrationRuntimeProvider):
@@ -286,6 +358,7 @@ def build_runtime_providers() -> dict[str, IntegrationRuntimeProvider]:
             provider_id="notion",
             server_url="https://mcp.notion.com/mcp",
             token_field="access_token",
+            token_refresher=refresh_notion_mcp_token,
         ),
         "github": HostedMcpToolProvider(
             provider_id="github",
@@ -296,6 +369,7 @@ def build_runtime_providers() -> dict[str, IntegrationRuntimeProvider]:
             provider_id="vercel",
             server_url="https://mcp.vercel.com",
             token_field="access_token",
+            token_refresher=refresh_vercel_mcp_token,
         ),
         "posthog": HostedMcpToolProvider(
             provider_id="posthog",
@@ -306,6 +380,13 @@ def build_runtime_providers() -> dict[str, IntegrationRuntimeProvider]:
         "airtable": AirtableToolProvider(),
         "fireflies": FirefliesToolProvider(),
     }
+
+
+def _is_unauthorized_error(exc: Exception) -> bool:
+    if isinstance(exc, httpx.HTTPStatusError) and exc.response.status_code == 401:
+        return True
+    message = str(exc).lower()
+    return "401" in message and "unauthorized" in message
 
 
 def _resolve_posthog_mcp_url(

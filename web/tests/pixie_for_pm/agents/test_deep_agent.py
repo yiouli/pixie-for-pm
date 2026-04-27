@@ -57,6 +57,30 @@ class _RetryingDeepAgent:
         return {"messages": [AIMessage(content="Recovered after retry")]}
 
 
+class _SingleAttemptAgent:
+    def __init__(self, *, fail_with_validation_error: bool) -> None:
+        self.fail_with_validation_error = fail_with_validation_error
+        self.calls: list[list[BaseMessage]] = []
+
+    async def ainvoke(
+        self,
+        inputs: object,
+        config: object | None = None,
+    ) -> dict[str, object]:
+        del config
+        if not isinstance(inputs, dict):
+            raise AssertionError("expected dict inputs")
+        messages = inputs.get("messages")
+        if not isinstance(messages, list):
+            raise AssertionError("expected list of messages")
+        self.calls.append(messages)
+        if self.fail_with_validation_error:
+            raise ToolException(
+                'The "update_content" command requires a "content_updates" parameter.'
+            )
+        return {"messages": [AIMessage(content="Recovered with new agent")]}
+
+
 @pytest.mark.parametrize(
     ("role", "subject"),
     [
@@ -195,5 +219,54 @@ async def test_run_deep_agent_retries_tool_validation_errors(
     assert result == "Recovered after retry"
     assert len(agent.calls) == 2
     retry_message = agent.calls[1][-1]
+    assert "update_content" in retry_message.content
+    assert "content_updates" in retry_message.content
+
+
+@pytest.mark.asyncio
+async def test_run_deep_agent_recreates_agent_for_validation_retry(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    created_agents: list[_SingleAttemptAgent] = []
+
+    def _make_agent(**kwargs: object) -> _SingleAttemptAgent:
+        del kwargs
+        agent = _SingleAttemptAgent(fail_with_validation_error=len(created_agents) == 0)
+        created_agents.append(agent)
+        return agent
+
+    monkeypatch.setattr(
+        "pixie_for_pm.agents.deep_agent.create_deep_agent",
+        _make_agent,
+    )
+
+    result = await run_deep_agent(
+        role=AgentRole.USER_RESEARCHER,
+        agent_name="pixie_user_researcher",
+        system_prompt="Investigate the issue.",
+        context=WorkflowContext(
+            thread_key="discord-thread-406",
+            current_agent=AgentRole.USER_RESEARCHER,
+            user_message="Update the Notion research synthesis.",
+            transcript=(),
+            trigger=DiscordTriggerContext(
+                discord_server_id="discord-server-406",
+                discord_user_id="user-406",
+                channel_id=14,
+                thread_id="discord-thread-406",
+                message_id=100,
+                thread_key="discord-thread-406",
+                dispatch_reason="direct_bot_mention",
+            ),
+            toolset=AgentToolset(),
+        ),
+        model="test-model",
+    )
+
+    assert result == "Recovered with new agent"
+    assert len(created_agents) == 2
+    assert len(created_agents[0].calls) == 1
+    assert len(created_agents[1].calls) == 1
+    retry_message = created_agents[1].calls[0][-1]
     assert "update_content" in retry_message.content
     assert "content_updates" in retry_message.content

@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from collections.abc import Awaitable, Callable
-from dataclasses import replace
 
 from langchain_core.language_models.chat_models import BaseChatModel
 
@@ -23,7 +22,6 @@ from pixie_for_pm.domain.models import (
     AgentMessage,
     AgentRole,
     WorkflowContext,
-    emit_public_message,
 )
 
 DEFAULT_PRODUCT_MANAGER_MODEL = DEFAULT_DEEP_AGENT_MODEL
@@ -92,7 +90,6 @@ def build_product_manager_handler(
 
         if is_retention_next_step_demo(context.user_message):
             planning_message = _build_research_handoff_message(context)
-            await emit_public_message(context.public_message_emitter, planning_message)
             return AgentExecution(
                 messages=[
                     AgentMessage(
@@ -284,8 +281,6 @@ def _build_research_handoff_message(context: WorkflowContext) -> str:
             "1. Ask the user researcher to pull the strongest existing evidence and patterns.",
             "2. Synthesize the biggest retention barrier and the most promising leverage points.",
             "3. Come back with three hypotheses and a recommendation on which one to deepen.",
-            "",
-            f"Starting point: {context.user_message}",
         )
     )
 
@@ -361,7 +356,18 @@ def _describe_integrations(context: WorkflowContext) -> str:
 
 
 def _without_response_stream(context: WorkflowContext) -> WorkflowContext:
-    return replace(context, response_emitter=None)
+    return WorkflowContext(
+        thread_key=context.thread_key,
+        current_agent=context.current_agent,
+        user_message=context.user_message,
+        transcript=context.transcript,
+        trigger=context.trigger,
+        toolset=context.toolset,
+        status_emitter=context.status_emitter,
+        response_emitter=None,
+        public_message_emitter=context.public_message_emitter,
+        handoff_context=context.handoff_context,
+    )
 
 
 __all__ = [
