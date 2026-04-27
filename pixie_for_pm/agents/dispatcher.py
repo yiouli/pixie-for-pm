@@ -195,6 +195,7 @@ def build_coordinator_handler(
                 model=model,
                 openai_api_key=openai_api_key,
                 execution_context_builder=_build_retention_kickoff_context,
+                stream_to_user=False,
             )
             return AgentExecution(
                 messages=[
@@ -236,6 +237,7 @@ def build_coordinator_handler(
                     option_number=prd_option,
                     recent_reply=recent_reply,
                 ),
+                stream_to_user=False,
             )
             return AgentExecution(
                 messages=[
@@ -272,6 +274,7 @@ def build_coordinator_handler(
                     current_context,
                     recent_reply=recent_reply,
                 ),
+                stream_to_user=False,
             )
             return AgentExecution(
                 messages=[
@@ -477,19 +480,27 @@ async def _generate_coordinator_reply(
     model: str | BaseChatModel,
     openai_api_key: str | None,
     execution_context_builder: Callable[[WorkflowContext], str],
+    stream_to_user: bool = True,
 ) -> str:
     return await run_deep_agent(
         role=AgentRole.COORDINATOR,
         agent_name=COORDINATOR_AGENT_NAME,
         system_prompt=COORDINATOR_SYSTEM_PROMPT,
-        context=_coordinator_writer_context(context),
+        context=_coordinator_writer_context(
+            context,
+            stream_to_user=stream_to_user,
+        ),
         model=model,
         openai_api_key=openai_api_key,
         execution_context_builder=execution_context_builder,
     )
 
 
-def _coordinator_writer_context(context: WorkflowContext) -> WorkflowContext:
+def _coordinator_writer_context(
+    context: WorkflowContext,
+    *,
+    stream_to_user: bool = True,
+) -> WorkflowContext:
     return WorkflowContext(
         thread_key=context.thread_key,
         current_agent=context.current_agent,
@@ -498,7 +509,7 @@ def _coordinator_writer_context(context: WorkflowContext) -> WorkflowContext:
         trigger=context.trigger,
         toolset=AgentToolset(),
         status_emitter=context.status_emitter,
-        response_emitter=context.response_emitter,
+        response_emitter=context.response_emitter if stream_to_user else None,
         public_message_emitter=context.public_message_emitter,
         handoff_context=context.handoff_context,
     )

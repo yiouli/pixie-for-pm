@@ -449,6 +449,8 @@ async def test_orchestrator_emits_internal_product_manager_status_updates(
         "Product manager is drafting the response...",
         "Handing off to coordinator...",
         "Analyzing with coordinator...",
+        "Coordinator is reasoning...",
+        "Coordinator is drafting the response...",
     ]
 
 
@@ -869,6 +871,8 @@ async def test_orchestrator_retention_demo_does_not_stream_specialist_drafts(
 ) -> None:
     thread_id = "discord-thread-demo"
     streamed_chunks: list[str] = []
+    status_updates: list[str] = []
+    public_messages: list[str] = []
 
     async def _notion_create_pages(pages: list[dict[str, object]]) -> str:
         del pages
@@ -965,6 +969,8 @@ async def test_orchestrator_retention_demo_does_not_stream_specialist_drafts(
                 )
             ),
             response_emitter=streamed_chunks.append,
+            status_emitter=status_updates.append,
+            public_message_emitter=public_messages.append,
         )
 
     assert [message.agent for message in result.transcript] == [
@@ -975,3 +981,17 @@ async def test_orchestrator_retention_demo_does_not_stream_specialist_drafts(
     assert "idea:" not in streamed_text.lower()
     assert "proposal:" not in streamed_text.lower()
     assert "which option you want me to turn into a prd" in streamed_text.lower()
+    # The coordinator's interim kickoff reply must not be streamed via the
+    # response emitter (otherwise it taints the Discord stream buffer and
+    # suppresses subsequent specialist status updates).
+    assert "review the user interviews first" not in streamed_text.lower()
+    # The kickoff is published as a standalone Discord message instead.
+    assert any(
+        "review the user interviews first" in message.lower()
+        for message in public_messages
+    )
+    # Specialist agents (user researcher) must still emit their internal
+    # progress while running, even after the coordinator has produced the
+    # kickoff reply.
+    assert "User researcher is reasoning..." in status_updates
+    assert "User researcher is drafting the response..." in status_updates
