@@ -12,7 +12,7 @@ Pixie keeps five internal agent roles:
 - user researcher
 - product designer
 
-The dispatcher is the sole user-entry routing agent. It sends relevant work to a specialist, defaults ambiguous requests to the product manager, and rejects clearly out-of-scope requests directly. The product manager still runs as a LangChain Deep Agents handler backed by an OpenAI chat model. The remaining specialist roles still use placeholder handlers until their workflows are implemented.
+The dispatcher is the sole user-entry routing agent. It sends relevant work to a specialist, defaults ambiguous requests to the product manager, and rejects clearly out-of-scope requests directly. The product manager runs as a LangChain Deep Agents handler backed by an OpenAI chat model. The user researcher also runs as a LangGraph-backed deep agent, requires an active Notion connection, reads product and research context from Notion, follows the interview synthesis handbook workflow, and writes tagging plus synthesis artifacts back to Notion. The market analyst and product designer still use placeholder handlers.
 
 Discord exposes a single public bot identity. Users start work by mentioning the bot or replying to a prior bot message. LangGraph can still hand work across internal agents, but those handoffs are not rendered as separate Discord personas or synthetic in-channel messages.
 
@@ -134,7 +134,7 @@ The bot no longer relies on any configured Discord channel. It reacts only when 
 
 Create `web/.env` from `web/.env.example`. Leave `VITE_API_URL` empty to use the same origin as FastAPI, or set it explicitly only when the frontend should call a different API host.
 
-The bot entrypoint expects a populated `.env` file or equivalent environment variables. The product manager runtime also requires `OPENAI_API_KEY`, and uses `PRODUCT_MANAGER_MODEL` when set or `openai:gpt-5.4` by default.
+The bot entrypoint expects a populated `.env` file or equivalent environment variables. The product manager and user researcher runtimes require `OPENAI_API_KEY`, and currently share `PRODUCT_MANAGER_MODEL` when set or `openai:gpt-5.4` by default.
 
 Connected integrations now initialize automatically from the stored server-scoped credentials. Pixie loads live hosted MCP tools for Notion, GitHub, Vercel, and PostHog at dispatch time, and uses direct API-backed tools for Airtable and Fireflies when no hosted MCP server is available. There is no extra `*_MCP_SERVER_*` enablement configuration.
 
@@ -161,7 +161,9 @@ This scaffold now covers the first integration-management slice:
 - The web frontend provides the initial settings UX for OAuth and API-key providers.
 - Connected provider tools now resolve automatically from hosted MCP servers or direct provider APIs using the stored connection credentials.
 - The dispatcher now chooses the initial specialist, defaults ambiguous work to the product manager, and rejects out-of-scope requests directly.
-- The product manager path now runs through LangChain Deep Agents with an OpenAI model. The remaining specialist roles still use placeholder business logic.
+- The product manager path now runs through LangChain Deep Agents with an OpenAI model.
+- The user researcher path now runs through LangGraph Deep Agents, requires Notion as the research source of truth, follows the handbook synthesis workflow, and writes tagging plus synthesis outputs back to Notion.
+- The market analyst and product designer still use placeholder business logic.
 - Each Discord-triggered turn now gets a typed integration tool bundle that can be passed directly to LangGraph agents as tools.
 
 See [specs/architecture.md](/home/yiouli/repo/pixie-for-pm/specs/architecture.md), [specs/integration-config.md](/home/yiouli/repo/pixie-for-pm/specs/integration-config.md), and [specs/agent-runtime-tooling.md](/home/yiouli/repo/pixie-for-pm/specs/agent-runtime-tooling.md) for the implementation outline and extension points.

@@ -11,7 +11,10 @@ from typing import Any, Protocol, cast
 import discord
 from discord import app_commands
 
-from pixie_for_pm.agents.registry import build_product_manager_handler
+from pixie_for_pm.agents.registry import (
+    build_product_manager_handler,
+    build_user_researcher_handler,
+)
 from pixie_for_pm.config.settings import AppSettings, load_settings
 from pixie_for_pm.discord.commands.settings import install_settings_command
 from pixie_for_pm.discord.normalization import (
@@ -500,7 +503,11 @@ class PixieDiscordBot(discord.Client):
                 AgentRole.PRODUCT_MANAGER: build_product_manager_handler(
                     model=settings.product_manager_model,
                     openai_api_key=settings.openai_api_key,
-                )
+                ),
+                AgentRole.USER_RESEARCHER: build_user_researcher_handler(
+                    model=settings.product_manager_model,
+                    openai_api_key=settings.openai_api_key,
+                ),
             },
             toolset_initializer=build_toolset_initializer(settings),
         )

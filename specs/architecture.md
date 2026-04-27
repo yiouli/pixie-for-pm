@@ -21,8 +21,9 @@ The first surface is a single public Discord bot. The second surface is a settin
 5. The LangGraph runtime loads or creates thread state using the configured SQLite checkpoint store.
 6. The dispatcher either rejects out-of-scope work directly, defaults ambiguous work to the product manager, or hands off to a specialist.
 7. The selected agent executes with access to the typed trigger context and initialized tool bundle.
-8. If the execution returns handoffs, the graph routes to the next internal agent without emitting a public Discord handoff message. Agents can hand off among the specialist roles, but they cannot hand work back to the dispatcher.
-9. The current turn’s messages are returned to the Discord transport for publication as a single public bot reply.
+8. The user researcher specialist requires a live Notion integration and uses it as both the read surface for product and research context and the write surface for transcript tagging plus final synthesis artifacts.
+9. If the execution returns handoffs, the graph routes to the next internal agent without emitting a public Discord handoff message. Agents can hand off among the specialist roles, but they cannot hand work back to the dispatcher.
+10. The current turn’s messages are returned to the Discord transport for publication as a single public bot reply.
 
 ## Discord Install Flow
 
@@ -78,8 +79,17 @@ Outbound publication:
 
 ## Extension Points
 
-- Replace the remaining placeholder specialist handlers in `pixie_for_pm/agents/registry.py` with real agent implementations.
+- Replace the remaining placeholder market analyst and product designer handlers in `pixie_for_pm/agents/registry.py` with real agent implementations.
 - Extend the hosted-MCP and API-backed provider runtime layer under `pixie_for_pm/integrations/` while keeping the typed toolset initializer stable.
 - Extend the FastAPI settings layer with live Supabase-backed persistence, token refresh, and provider-specific validation hardening.
 - Enrich the Discord adapter with thread ownership and richer error translation.
 - Swap SQLite persistence for another LangGraph-supported checkpoint backend when deployment requirements change.
+
+## User Research Workflow
+
+The user researcher agent follows the interview synthesis handbook as an operating method rather than free-form summarization.
+
+- It reads product context from Notion first, including JTBD, pain points, hypotheses, target segments, and prior decisions when available.
+- It then reads research context from Notion, including methodology notes, interview script, transcripts, past learnings, and existing tagged artifacts.
+- It codes evidence, clusters themes, identifies segments, contradictions, and say/do gaps, and drafts ranked insights grounded in transcript evidence.
+- It updates Notion with structured tagging artifacts plus the final synthesis deliverable so the Discord reply is only a summary of work already written back to the workspace.

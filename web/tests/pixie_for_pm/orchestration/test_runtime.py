@@ -64,6 +64,17 @@ async def _market_placeholder(context: WorkflowContext) -> AgentExecution:
     )
 
 
+async def _research_placeholder(context: WorkflowContext) -> AgentExecution:
+    return AgentExecution(
+        messages=[
+            AgentMessage(
+                agent=AgentRole.USER_RESEARCHER,
+                content=f"Placeholder research synthesis response for: {context.user_message}",
+            )
+        ]
+    )
+
+
 async def _pm_direct_response(context: WorkflowContext) -> AgentExecution:
     return AgentExecution(
         messages=[
@@ -363,6 +374,34 @@ async def test_orchestrator_dispatches_market_requests_to_market_analyst(
 
     assert [message.agent for message in result.transcript] == [
         AgentRole.MARKET_ANALYST
+    ]
+
+
+@pytest.mark.asyncio
+async def test_orchestrator_dispatches_research_requests_to_user_researcher(
+    tmp_path: Path,
+) -> None:
+    request = build_dispatch_request(
+        IncomingDiscordMessage(
+            discord_message_id=151,
+            discord_server_id="discord-server-10015",
+            channel_id=251,
+            thread_id="discord-thread-10015",
+            author_id=341,
+            content="Synthesize the customer interviews and update our JTBD themes.",
+            directly_mentions_bot=True,
+            is_reply_to_bot=False,
+        )
+    )
+
+    async with PixieOrchestrator(
+        checkpoint_path=tmp_path / "dispatcher-research.sqlite",
+        agent_handlers={AgentRole.USER_RESEARCHER: _research_placeholder},
+    ) as orchestrator:
+        result = await orchestrator.dispatch(request)
+
+    assert [message.agent for message in result.transcript] == [
+        AgentRole.USER_RESEARCHER
     ]
 
 
