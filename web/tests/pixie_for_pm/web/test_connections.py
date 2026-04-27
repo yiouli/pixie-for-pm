@@ -1,3 +1,5 @@
+import asyncio
+from datetime import UTC, datetime, timedelta
 from typing import Any
 from urllib.parse import parse_qs, urlsplit
 
@@ -11,7 +13,8 @@ from pixie_for_pm.web.encryption import CredentialCipher
 from pixie_for_pm.web.providers.api_key import MappingApiKeyValidator
 from pixie_for_pm.web.providers.discord_guilds import StaticDiscordGuildService
 from pixie_for_pm.web.providers.oauth import StaticOAuthService
-from pixie_for_pm.web.store import InMemoryConnectionStore
+from pixie_for_pm.web.routes.connection_routes import _serialize_connection
+from pixie_for_pm.web.store import ConnectionRecord, InMemoryConnectionStore
 
 _FERNET_KEY = "j0aN3s-cLScfv0GfNyG8t0UyONn7y8u2s6o6cLs1hYw="
 _OWNER = AuthenticatedUser(id="user-1", display_name="Pixie PM", email="pm@example.com")
@@ -99,7 +102,6 @@ def test_save_api_key_connection_encrypts_and_stores_credentials() -> None:
     list_response = client.get("/api/connections?server_id=server-123")
 
     # Verify the credentials are retrievable directly from the store (no HTTP hop)
-    import asyncio
 
     connection = asyncio.get_event_loop().run_until_complete(
         store.get_connection_by_discord_server("server-123", "posthog")
@@ -145,7 +147,6 @@ def test_oauth_authorize_and_callback_store_tokens_and_redirect_back_to_settings
     )
 
     # Verify tokens are stored encrypted in the store (not fetched over HTTP)
-    import asyncio
 
     connection = asyncio.get_event_loop().run_until_complete(
         store.get_connection_by_discord_server("server-123", "github")
@@ -234,7 +235,6 @@ def test_vercel_authorize_and_callback_use_mcp_flow_context_cookie(
         follow_redirects=False,
     )
 
-    import asyncio
 
     connection = asyncio.get_event_loop().run_until_complete(
         store.get_connection_by_discord_server("server-123", "vercel")
@@ -328,7 +328,6 @@ def test_notion_authorize_and_callback_use_mcp_flow_context_cookie(
         follow_redirects=False,
     )
 
-    import asyncio
 
     connection = asyncio.get_event_loop().run_until_complete(
         store.get_connection_by_discord_server("server-123", "notion")
@@ -369,7 +368,6 @@ def test_disconnect_removes_credentials_from_store() -> None:
     )
     delete_response = client.delete("/api/connections/posthog?server_id=server-123")
 
-    import asyncio
 
     connection = asyncio.get_event_loop().run_until_complete(
         store.get_connection_by_discord_server("server-123", "posthog")
@@ -471,3 +469,43 @@ async def test_oauth_flow_prefers_request_host_over_localhost_config(
         "https://pixie-preview.vercel.app/settings"
         "?server_id=server-123&connected=vercel"
     )
+
+
+def _make_connection_record(credentials: dict[str, str]) -> ConnectionRecord:
+    cipher = CredentialCipher(_FERNET_KEY)
+    return ConnectionRecord(
+        id="conn-1",
+        server_id="server-1",
+        provider="vercel",
+        credentials_encrypted=cipher.encrypt_credentials(credentials),
+        scopes=None,
+        status="active",
+        connected_at=datetime(2026, 1, 1, tzinfo=UTC),
+        last_used_at=None,
+    )
+
+
+def test_serialize_connection_includes_access_expires_at_without_refresh_token() -> None:
+    cipher = CredentialCipher(_FERNET_KEY)
+    record = _make_connection_record(
+        {"access_token": "tok", "expires_in": "3600"}
+    )
+    result = _serialize_connection(record, cipher)
+    expected = (datetime(2026, 1, 1, tzinfo=UTC) + timedelta(seconds=3600)).isoformat()
+    assert result["access_expires_at"] == expected
+
+
+def test_serialize_connection_omits_access_expires_at_with_refresh_token() -> None:
+    cipher = CredentialCipher(_FERNET_KEY)
+    record = _make_connection_record(
+        {"access_token": "tok", "expires_in": "3600", "refresh_token": "ref"}
+    )
+    result = _serialize_connection(record, cipher)
+    assert "access_expires_at" not in result
+
+
+def test_serialize_connection_omits_access_expires_at_without_expires_in() -> None:
+    cipher = CredentialCipher(_FERNET_KEY)
+    record = _make_connection_record({"access_token": "tok"})
+    result = _serialize_connection(record, cipher)
+    assert "access_expires_at" not in result

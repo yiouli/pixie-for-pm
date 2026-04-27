@@ -19,6 +19,7 @@ type ConnectionSummary = {
   status: string;
   connected_at: string;
   last_used_at: string | null;
+  access_expires_at?: string | null;
 };
 
 type ProviderDefinition = {

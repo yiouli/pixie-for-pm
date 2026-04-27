@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import base64
 import json
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Annotated
 from urllib.parse import urlsplit
 
@@ -12,6 +12,7 @@ from fastapi.responses import JSONResponse, RedirectResponse
 from pixie_for_pm.integrations.registry import PROVIDERS
 from pixie_for_pm.web.auth import AuthenticatedUser, CurrentUserDep
 from pixie_for_pm.web.dependencies import ServicesDep, WebAppServices
+from pixie_for_pm.web.encryption import CredentialCipher
 from pixie_for_pm.web.providers.api_key import InvalidApiKeyCredentialsError
 from pixie_for_pm.web.providers.oauth import (
     InvalidOAuthStateError,
@@ -40,13 +41,29 @@ def _format_datetime(value: datetime | None) -> str | None:
     return value.isoformat()
 
 
-def _serialize_connection(connection: ConnectionRecord) -> dict[str, str | None]:
-    return {
+def _serialize_connection(
+    connection: ConnectionRecord,
+    cipher: CredentialCipher | None = None,
+) -> dict[str, str | None]:
+    result: dict[str, str | None] = {
         "provider": connection.provider,
         "status": connection.status,
         "connected_at": connection.connected_at.isoformat(),
         "last_used_at": _format_datetime(connection.last_used_at),
     }
+    if cipher is not None:
+        try:
+            creds = cipher.decrypt_credentials(connection.credentials_encrypted)
+            if not creds.get("refresh_token"):
+                expires_in_raw = creds.get("expires_in")
+                if expires_in_raw is not None:
+                    expires_at = connection.connected_at + timedelta(
+                        seconds=int(expires_in_raw)
+                    )
+                    result["access_expires_at"] = expires_at.isoformat()
+        except Exception:
+            pass
+    return result
 
 
 async def _get_owned_server(
@@ -189,7 +206,10 @@ async def list_connections(
 ) -> list[dict[str, str | None]]:
     server = await _get_owned_server(services, server_id, user)
     connections = await services.store.list_connections(server.id)
-    return [_serialize_connection(connection) for connection in connections]
+    return [
+        _serialize_connection(connection, services.credential_cipher)
+        for connection in connections
+    ]
 
 
 @router.get("/{provider}/authorize", response_model=None)
@@ -424,7 +444,7 @@ async def save_api_key_connection(
         None,
         "active",
     )
-    return _serialize_connection(connection)
+    return _serialize_connection(connection, services.credential_cipher)
 
 
 @router.delete("/{provider}")
