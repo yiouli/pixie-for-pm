@@ -1,21 +1,25 @@
 from __future__ import annotations
 
+import json
 import re
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Mapping, Sequence
 
-import pixie
 from langchain_core.language_models.chat_models import BaseChatModel
 from langchain_core.tools import BaseTool
 
+import pixie
 from pixie_for_pm.agents.deep_agent import DEFAULT_DEEP_AGENT_MODEL, run_deep_agent
 from pixie_for_pm.agents.demo_flow import (
     BLOCKED_STATUS,
+    OPTIONS_SUMMARY_ARTIFACT_KIND,
     OPTIONS_SUMMARY_STAGE,
     PRD_BRIEF_STAGE,
+    PRD_READY_ARTIFACT_KIND,
     PRD_READY_STAGE,
     RESEARCH_BRIEF_STAGE,
     RESEARCH_FINDINGS_STAGE,
     parse_demo_handoff,
+    serialize_demo_artifact,
     serialize_demo_handoff,
 )
 from pixie_for_pm.domain.models import (
@@ -113,7 +117,7 @@ def build_product_manager_handler(
                     ),
                 )
                 persisted, page_url = notion_persist
-                reply = _build_prd_reply(
+                artifact = _build_prd_ready_artifact(
                     persisted=persisted,
                     page_url=page_url,
                     option_number=deep_dive_option,
@@ -126,7 +130,7 @@ def build_product_manager_handler(
                             target_agent=AgentRole.COORDINATOR,
                             reason=serialize_demo_handoff(
                                 stage=PRD_READY_STAGE,
-                                artifact=reply,
+                                artifact=artifact,
                             ),
                         )
                     ],
@@ -148,7 +152,7 @@ def build_product_manager_handler(
             role=AgentRole.PRODUCT_MANAGER,
             agent_name=PRODUCT_MANAGER_AGENT_NAME,
             system_prompt=PRODUCT_MANAGER_SYSTEM_PROMPT,
-            context=context,
+            context=_without_response_stream(context),
             model=model,
             openai_api_key=openai_api_key,
             execution_context_builder=_build_default_execution_context,
@@ -191,7 +195,7 @@ async def _respond_to_research_findings(
         role=AgentRole.PRODUCT_MANAGER,
         agent_name=PRODUCT_MANAGER_AGENT_NAME,
         system_prompt=PRODUCT_MANAGER_SYSTEM_PROMPT,
-        context=context,
+        context=_without_response_stream(context),
         model=model,
         openai_api_key=openai_api_key,
         execution_context_builder=lambda current_context: _build_hypothesis_context(
@@ -199,7 +203,7 @@ async def _respond_to_research_findings(
             findings=findings,
         ),
     )
-    content = _compact_hypothesis_reply(content)
+    content = _build_options_summary_artifact(content=content, findings=findings)
     return AgentExecution(
         messages=[],
         handoffs=[
@@ -441,21 +445,28 @@ def _extract_recent_pm_reply(context: WorkflowContext) -> str | None:
     return None
 
 
-def _build_prd_reply(
+def _build_prd_ready_artifact(
     *, persisted: bool, page_url: str | None, option_number: int
 ) -> str:
-    if page_url is not None:
-        prd_line = f"PRD for option #{option_number} ready: {page_url}"
-    elif persisted:
-        prd_line = (
-            f"PRD for option #{option_number} saved to Notion (page link not returned)."
-        )
-    else:
-        prd_line = (
-            f"PRD for option #{option_number} drafted internally "
-            "(Notion write was not available)."
-        )
-    return f"{prd_line}\nWant me to spin up a quick clickable prototype for it next?"
+    return serialize_demo_artifact(
+        {
+            "kind": PRD_READY_ARTIFACT_KIND,
+            "option_number": option_number,
+            "persisted": persisted,
+            "page_url": page_url,
+        }
+    )
+
+
+def _build_options_summary_artifact(*, content: str, findings: str) -> str:
+    return serialize_demo_artifact(
+        {
+            "kind": OPTIONS_SUMMARY_ARTIFACT_KIND,
+            "pm_analysis": content,
+            "research_findings": findings,
+            "research_url": _extract_notion_url(findings),
+        }
+    )
 
 
 def _build_designer_brief_from_history(
@@ -519,12 +530,40 @@ async def _safe_invoke(tool: BaseTool, payload: dict[str, object]) -> str | None
     return str(result)
 
 
-def _extract_notion_url(result: str | None) -> str | None:
+def _extract_notion_url(result: object | None) -> str | None:
     if result is None:
         return None
+
+    if isinstance(result, Mapping):
+        for key in ("url", "public_url", "page_url", "id"):
+            extracted = _extract_notion_url(result.get(key))
+            if extracted is not None:
+                return extracted
+        for value in result.values():
+            extracted = _extract_notion_url(value)
+            if extracted is not None:
+                return extracted
+        return None
+
+    if isinstance(result, Sequence) and not isinstance(result, str):
+        for item in result:
+            extracted = _extract_notion_url(item)
+            if extracted is not None:
+                return extracted
+        return None
+
+    if not isinstance(result, str):
+        return None
+
+    parsed_json = _parse_json_value(result)
+    if parsed_json is not None:
+        extracted = _extract_notion_url(parsed_json)
+        if extracted is not None:
+            return extracted
+
     match = _NOTION_PAGE_URL_PATTERN.search(result)
     if match is not None:
-        return match.group(0)
+        return _canonicalize_notion_url(match.group(0))
 
     id_match = _NOTION_PAGE_ID_PATTERN.search(result)
     if id_match is None:
@@ -532,6 +571,25 @@ def _extract_notion_url(result: str | None) -> str | None:
 
     page_id = id_match.group(1).replace("-", "")
     return f"https://www.notion.so/{page_id}"
+
+
+def _parse_json_value(value: str) -> object | None:
+    text = value.strip()
+    if text == "" or text[0] not in "[{":
+        return None
+    try:
+        parsed: object = json.loads(text)
+        return parsed
+    except json.JSONDecodeError:
+        return None
+
+
+def _canonicalize_notion_url(url: str) -> str:
+    stripped = url.rstrip('".,)>]')
+    id_match = _NOTION_PAGE_ID_PATTERN.search(stripped)
+    if id_match is None:
+        return stripped
+    return f"https://www.notion.so/{id_match.group(1).replace('-', '')}"
 
 
 def _compact_hypothesis_reply(content: str) -> str:
@@ -545,6 +603,52 @@ def _compact_hypothesis_reply(content: str) -> str:
         lines.append(f"{number}. {option_text}")
     lines.append("Which option should I deepen next: #1, #2, or #3?")
     return "\n".join(lines)
+
+
+def _format_demo_hypothesis_reply(content: str, *, findings: str) -> str:
+    titles = _extract_demo_option_titles(content)
+    if len(titles) < 3:
+        return _compact_hypothesis_reply(content)
+
+    lines = [f"{index}. {title}" for index, title in enumerate(titles[:3], start=1)]
+    notion_url = _extract_notion_url(findings)
+    if notion_url is None:
+        lines.append("")
+        lines.append("What do you think?")
+        return "\n".join(lines)
+
+    lines.extend(
+        (
+            "",
+            "What do you think? I also saved the full user interview synthesis here: "
+            f"{notion_url}",
+        )
+    )
+    return "\n".join(lines)
+
+
+def _extract_demo_option_titles(content: str) -> list[str]:
+    blocks = _NUMBERED_BLOCK_PATTERN.findall(content)
+    titles: list[str] = []
+    for _, block in blocks[:3]:
+        title = _extract_demo_option_title(block)
+        if title is not None:
+            titles.append(title)
+    return titles
+
+
+def _extract_demo_option_title(block: str) -> str | None:
+    for raw_line in block.splitlines():
+        line = _clean_line(raw_line)
+        if line == "":
+            continue
+        title = re.split(
+            r"\s+-\s+Idea:\s+|\s+Idea:\s+", line, maxsplit=1, flags=re.IGNORECASE
+        )[0]
+        title = title.strip().rstrip("-:")
+        if title != "":
+            return title
+    return None
 
 
 def _compact_option_block(block: str) -> str:

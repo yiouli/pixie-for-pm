@@ -27,6 +27,10 @@ _OPTION_PROMPT_MARKERS = (
     "which option should i deepen",
     "which option do you want me to deepen",
     "which option should we deepen",
+    "which option should i turn into a prd",
+    "which one should i turn into a prd",
+    "turn into a prd",
+    "draft a prd",
 )
 _PROTOTYPE_PROMPT_MARKERS = (
     "want me to spin up a quick clickable prototype",
@@ -34,6 +38,9 @@ _PROTOTYPE_PROMPT_MARKERS = (
     "want me to build a prototype",
     "shall i spin up a prototype",
     "should i spin up a prototype",
+    "want me to turn that into a quick clickable prototype",
+    "want me to make a clickable prototype",
+    "want me to make a prototype",
 )
 _APPROVAL_PATTERN = re.compile(
     r"\b(sure|yes|yep|yeah|yup|ok|okay|please|do it|go ahead|let'?s go|sounds good)\b",
@@ -51,6 +58,10 @@ AWAITING_PROTOTYPE_APPROVAL_STAGE = "awaiting_prototype_approval"
 
 READY_STATUS = "ready"
 BLOCKED_STATUS = "blocked"
+
+OPTIONS_SUMMARY_ARTIFACT_KIND = "options_summary"
+PRD_READY_ARTIFACT_KIND = "prd_ready"
+PROTOTYPE_READY_ARTIFACT_KIND = "prototype_ready"
 
 
 @dataclass(frozen=True)
@@ -97,7 +108,11 @@ def parse_bare_option_choice(
     """
     if recent_pm_reply is None:
         return None
-    if not _contains_any(recent_pm_reply.casefold(), _OPTION_PROMPT_MARKERS):
+    normalized_recent_reply = recent_pm_reply.casefold()
+    if not _contains_any(normalized_recent_reply, _OPTION_PROMPT_MARKERS) and not (
+        re.search(r"(?m)^\s*1\.\s+", recent_pm_reply) is not None
+        and re.search(r"(?m)^\s*2\.\s+", recent_pm_reply) is not None
+    ):
         return None
 
     text = message.strip().casefold()
@@ -124,7 +139,10 @@ def parse_prototype_approval(
     """Match short approvals after the PM asks about spinning up a prototype."""
     if recent_pm_reply is None:
         return False
-    if not _contains_any(recent_pm_reply.casefold(), _PROTOTYPE_PROMPT_MARKERS):
+    normalized_recent_reply = recent_pm_reply.casefold()
+    if not _contains_any(normalized_recent_reply, _PROTOTYPE_PROMPT_MARKERS) and not (
+        "prototype" in normalized_recent_reply and "?" in recent_pm_reply
+    ):
         return False
     text = message.strip()
     if text == "":
@@ -161,6 +179,21 @@ def parse_prd_request_option(
 
 def _contains_any(haystack: str, needles: tuple[str, ...]) -> bool:
     return any(needle in haystack for needle in needles)
+
+
+def serialize_demo_artifact(payload: dict[str, object]) -> str:
+    return json.dumps(payload, separators=(",", ":"))
+
+
+def parse_demo_artifact(artifact: str) -> dict[str, object] | None:
+    try:
+        payload = json.loads(artifact)
+    except json.JSONDecodeError:
+        return None
+
+    if not isinstance(payload, dict):
+        return None
+    return payload
 
 
 def serialize_demo_handoff(
@@ -221,9 +254,12 @@ __all__ = [
     "AWAITING_PROTOTYPE_APPROVAL_STAGE",
     "BLOCKED_STATUS",
     "DemoHandoffPayload",
+    "OPTIONS_SUMMARY_ARTIFACT_KIND",
     "OPTIONS_SUMMARY_STAGE",
+    "PRD_READY_ARTIFACT_KIND",
     "PRD_BRIEF_STAGE",
     "PRD_READY_STAGE",
+    "PROTOTYPE_READY_ARTIFACT_KIND",
     "PROTOTYPE_BRIEF_STAGE",
     "PROTOTYPE_SUMMARY_STAGE",
     "READY_STATUS",
@@ -232,9 +268,11 @@ __all__ = [
     "RETENTION_NEXT_STEP_DEMO_WORKFLOW",
     "is_retention_next_step_demo",
     "parse_bare_option_choice",
+    "parse_demo_artifact",
     "parse_deep_dive_option",
     "parse_demo_handoff",
     "parse_prd_request_option",
     "parse_prototype_approval",
+    "serialize_demo_artifact",
     "serialize_demo_handoff",
 ]

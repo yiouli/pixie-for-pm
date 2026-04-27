@@ -3,15 +3,19 @@ from langchain_core.language_models.fake_chat_models import FakeListChatModel
 from langchain_core.tools import StructuredTool
 from pydantic import BaseModel, Field
 
+from pixie_for_pm.agents import product_manager as product_manager_module
 from pixie_for_pm.agents.demo_flow import (
     BLOCKED_STATUS,
+    OPTIONS_SUMMARY_ARTIFACT_KIND,
     OPTIONS_SUMMARY_STAGE,
     PRD_BRIEF_STAGE,
+    PRD_READY_ARTIFACT_KIND,
     PRD_READY_STAGE,
     PROTOTYPE_BRIEF_STAGE,
     PROTOTYPE_SUMMARY_STAGE,
     RESEARCH_BRIEF_STAGE,
     RESEARCH_FINDINGS_STAGE,
+    parse_demo_artifact,
     parse_demo_handoff,
     serialize_demo_handoff,
 )
@@ -200,7 +204,14 @@ async def test_dispatcher_handler_falls_back_to_product_manager_for_ambiguous_re
 async def test_dispatcher_handler_routes_retention_strategy_questions_to_product_manager() -> (
     None
 ):
-    handler = build_dispatcher_handler()
+    handler = build_dispatcher_handler(
+        model=_ToolCallingFakeListChatModel(
+            responses=[
+                "I’m going to review the user interviews first, then I’ll come back "
+                "with the strongest next-build options."
+            ]
+        )
+    )
 
     execution = await handler(
         WorkflowContext(
@@ -236,7 +247,14 @@ async def test_dispatcher_handler_routes_retention_strategy_questions_to_product
 
 @pytest.mark.asyncio
 async def test_dispatcher_handler_rejects_irrelevant_requests_directly() -> None:
-    handler = build_dispatcher_handler()
+    handler = build_dispatcher_handler(
+        model=_ToolCallingFakeListChatModel(
+            responses=[
+                "I can help with product strategy, market analysis, user research, "
+                "and product design, but this request is outside that scope."
+            ]
+        )
+    )
 
     execution = await handler(
         WorkflowContext(
@@ -351,7 +369,10 @@ async def test_product_manager_handler_turns_research_findings_into_coordinator_
     demo_payload = parse_demo_handoff(execution.handoffs[0].reason)
     assert demo_payload is not None
     assert demo_payload.stage == OPTIONS_SUMMARY_STAGE
-    assert demo_payload.artifact.startswith("1.")
+    artifact = parse_demo_artifact(demo_payload.artifact)
+    assert artifact is not None
+    assert artifact["kind"] == OPTIONS_SUMMARY_ARTIFACT_KIND
+    assert str(artifact["pm_analysis"]).startswith("1.")
 
 
 @pytest.mark.asyncio
@@ -434,8 +455,12 @@ async def test_product_manager_handler_asks_for_prototype_approval_after_deep_di
     demo_payload = parse_demo_handoff(execution.handoffs[0].reason)
     assert demo_payload is not None
     assert demo_payload.stage == PRD_READY_STAGE
-    assert "prd for option #1" in demo_payload.artifact.lower()
-    assert "prototype" in demo_payload.artifact.lower()
+    artifact = parse_demo_artifact(demo_payload.artifact)
+    assert artifact is not None
+    assert artifact["kind"] == PRD_READY_ARTIFACT_KIND
+    assert artifact["option_number"] == 1
+    assert artifact["persisted"] is False
+    assert artifact["page_url"] is None
 
 
 @pytest.mark.asyncio
@@ -521,13 +546,21 @@ async def test_product_manager_handler_persists_demo_prd_and_asks_for_prototype(
     demo_payload = parse_demo_handoff(execution.handoffs[0].reason)
     assert demo_payload is not None
     assert demo_payload.stage == PRD_READY_STAGE
-    assert "https://www.notion.so/saved-prd-page" in demo_payload.artifact
-    assert "prototype" in demo_payload.artifact.lower()
+    artifact = parse_demo_artifact(demo_payload.artifact)
+    assert artifact is not None
+    assert artifact["kind"] == PRD_READY_ARTIFACT_KIND
+    assert artifact["option_number"] == 2
+    assert artifact["persisted"] is True
+    assert artifact["page_url"] == "https://www.notion.so/saved-prd-page"
 
 
 @pytest.mark.asyncio
 async def test_dispatcher_handler_handoffs_to_designer_on_prototype_approval() -> None:
-    handler = build_dispatcher_handler()
+    handler = build_dispatcher_handler(
+        model=_ToolCallingFakeListChatModel(
+            responses=["I’m turning that into a quick clickable prototype now."]
+        )
+    )
 
     execution = await handler(
         WorkflowContext(
@@ -557,7 +590,7 @@ async def test_dispatcher_handler_handoffs_to_designer_on_prototype_approval() -
     )
 
     assert [message.agent for message in execution.messages] == [AgentRole.COORDINATOR]
-    assert execution.messages[0].content.lower() == "on it."
+    assert "prototype" in execution.messages[0].content.lower()
     assert [handoff.target_agent for handoff in execution.handoffs] == [
         AgentRole.PRODUCT_DESIGNER
     ]
@@ -672,11 +705,14 @@ async def test_product_manager_handler_surfaces_notion_url_from_create_page_iden
     demo_payload = parse_demo_handoff(execution.handoffs[0].reason)
     assert demo_payload is not None
     assert demo_payload.stage == PRD_READY_STAGE
+    artifact = parse_demo_artifact(demo_payload.artifact)
+    assert artifact is not None
+    assert artifact["kind"] == PRD_READY_ARTIFACT_KIND
+    assert artifact["option_number"] == 2
+    assert artifact["persisted"] is True
     assert (
-        "https://www.notion.so/34f9952098ec810199ddd02c431566ed"
-        in demo_payload.artifact
+        artifact["page_url"] == "https://www.notion.so/34f9952098ec810199ddd02c431566ed"
     )
-    assert "spin up a quick clickable prototype" in demo_payload.artifact.lower()
 
 
 @pytest.mark.asyncio
@@ -769,11 +805,8 @@ async def test_product_designer_handler_publishes_demo_prototype_before_pm_hando
     )
 
     assert execution.messages == []
-    assert [call["tool"] for call in tool_calls] == [
-        "vercel_list_projects",
-        "vercel_create_deployment",
-    ]
-    assert tool_calls[1]["project_name"] == "pixie-retention-demo"
+    assert [call["tool"] for call in tool_calls] == ["vercel_create_deployment"]
+    assert tool_calls[0]["project_name"] == "pixie-retention-demo-discord-thread-1"
     assert [handoff.target_agent for handoff in execution.handoffs] == [
         AgentRole.COORDINATOR
     ]
@@ -869,10 +902,7 @@ async def test_product_designer_handler_marks_manual_vercel_deploy_as_blocked() 
         )
     )
 
-    assert [call["tool"] for call in tool_calls] == [
-        "vercel_list_projects",
-        "vercel_deploy_to_vercel",
-    ]
+    assert [call["tool"] for call in tool_calls] == ["vercel_deploy_to_vercel"]
     demo_payload = parse_demo_handoff(execution.handoffs[0].reason)
     assert demo_payload is not None
     assert demo_payload.stage == PROTOTYPE_SUMMARY_STAGE
@@ -883,7 +913,14 @@ async def test_product_designer_handler_marks_manual_vercel_deploy_as_blocked() 
 
 @pytest.mark.asyncio
 async def test_dispatcher_handler_surfaces_blocked_prototype_status_honestly() -> None:
-    handler = build_dispatcher_handler()
+    handler = build_dispatcher_handler(
+        model=_ToolCallingFakeListChatModel(
+            responses=[
+                "I couldn’t publish a live prototype yet because the Vercel deployment "
+                "tool only returned manual `vercel deploy` instructions."
+            ]
+        )
+    )
 
     execution = await handler(
         WorkflowContext(
@@ -915,7 +952,8 @@ async def test_dispatcher_handler_surfaces_blocked_prototype_status_honestly() -
 
     assert execution.handoffs == []
     assert execution.messages[0].agent is AgentRole.COORDINATOR
-    assert "could not publish" in execution.messages[0].content.lower()
+    assert "publish" in execution.messages[0].content.lower()
+    assert "vercel deploy" in execution.messages[0].content.lower()
     assert "prototype draft is ready" not in execution.messages[0].content.lower()
 
 
@@ -927,7 +965,7 @@ def test_product_manager_prompt_spells_out_lenny_style_prd_sections() -> None:
 
 
 @pytest.mark.asyncio
-async def test_product_manager_handler_emits_streamed_content_deltas() -> None:
+async def test_product_manager_handler_does_not_emit_streamed_content_deltas() -> None:
     streamed_chunks: list[str] = []
     handler = build_product_manager_handler(
         model=_ToolCallingFakeListChatModel(
@@ -955,8 +993,163 @@ async def test_product_manager_handler_emits_streamed_content_deltas() -> None:
         )
     )
 
-    assert "".join(streamed_chunks) == execution.handoffs[0].reason
-    assert streamed_chunks != []
+    assert execution.handoffs[0].reason == (
+        "PM_AGENT_OK Live streamed response for Discord delivery."
+    )
+    assert streamed_chunks == []
+
+
+@pytest.mark.asyncio
+async def test_product_manager_handler_does_not_stream_demo_option_summary() -> None:
+    handler = build_product_manager_handler(
+        model=_ToolCallingFakeListChatModel(
+            responses=[
+                (
+                    "1. Growth follow-up nudges in 1:1 prep - Idea: surface a "
+                    "specific pre-1:1 nudge. Why: it lands at the moment a manager "
+                    "can act. Proposal: detect open growth threads and suggest one "
+                    "follow-up question.\n"
+                    "2. Career conversation brief for one report - Idea: generate a "
+                    "person-specific brief. Why: it reduces prep work. Proposal: "
+                    "create a one-report brief with evidence and one next step.\n"
+                    "3. Evidence-linked growth framework - Idea: map frameworks to "
+                    "real notes. Why: evidence-backed coaching is more credible. "
+                    "Proposal: organize note evidence into growth dimensions and "
+                    "highlight gaps."
+                )
+            ]
+        )
+    )
+    streamed_chunks: list[str] = []
+
+    execution = await handler(
+        WorkflowContext(
+            thread_key="discord-thread-1",
+            current_agent=AgentRole.PRODUCT_MANAGER,
+            user_message="unused for handoff-driven demo stage",
+            transcript=(),
+            trigger=DiscordTriggerContext(
+                discord_server_id="discord-server-1",
+                discord_user_id="user-1",
+                channel_id=10,
+                thread_id="discord-thread-1",
+                message_id=99,
+                thread_key="discord-thread-1",
+                dispatch_reason="direct_bot_mention",
+            ),
+            toolset=AgentToolset(),
+            response_emitter=streamed_chunks.append,
+            handoff_context=serialize_demo_handoff(
+                stage=RESEARCH_FINDINGS_STAGE,
+                artifact=(
+                    "Research synthesis saved to Notion: "
+                    "https://www.notion.so/user-interview-synthesis"
+                ),
+            ),
+        )
+    )
+
+    demo_payload = parse_demo_handoff(execution.handoffs[0].reason)
+    assert demo_payload is not None
+    assert demo_payload.stage == OPTIONS_SUMMARY_STAGE
+    assert streamed_chunks == []
+
+
+@pytest.mark.asyncio
+async def test_product_manager_handler_strips_response_emitter_before_deep_agent(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    captured_emitters: list[object | None] = []
+
+    async def _fake_run_deep_agent(**kwargs: object) -> str:
+        context = kwargs["context"]
+        assert isinstance(context, WorkflowContext)
+        captured_emitters.append(context.response_emitter)
+        return "PM_AGENT_OK"
+
+    monkeypatch.setattr(product_manager_module, "run_deep_agent", _fake_run_deep_agent)
+
+    handler = build_product_manager_handler()
+    execution = await handler(
+        WorkflowContext(
+            thread_key="discord-thread-1",
+            current_agent=AgentRole.PRODUCT_MANAGER,
+            user_message="Can you help me test streamed Discord output?",
+            transcript=(),
+            trigger=DiscordTriggerContext(
+                discord_server_id="discord-server-1",
+                discord_user_id="user-1",
+                channel_id=10,
+                thread_id="discord-thread-1",
+                message_id=99,
+                thread_key="discord-thread-1",
+                dispatch_reason="direct_bot_mention",
+            ),
+            toolset=AgentToolset(),
+            response_emitter=lambda chunk: None,
+        )
+    )
+
+    assert execution.handoffs[0].reason == "PM_AGENT_OK"
+    assert captured_emitters == [None]
+
+
+@pytest.mark.asyncio
+async def test_product_manager_demo_handoff_strips_response_emitter_before_deep_agent(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    captured_emitters: list[object | None] = []
+
+    async def _fake_run_deep_agent(**kwargs: object) -> str:
+        context = kwargs["context"]
+        assert isinstance(context, WorkflowContext)
+        captured_emitters.append(context.response_emitter)
+        return (
+            "1. Growth follow-up nudges in 1:1 prep - Idea: surface a specific "
+            "pre-1:1 nudge. Why: it lands at the moment a manager can act. "
+            "Proposal: detect open growth threads and suggest one follow-up question.\n"
+            "2. Career conversation brief for one report - Idea: generate a "
+            "person-specific brief. Why: it reduces prep work. Proposal: create a "
+            "one-report brief with evidence and one next step.\n"
+            "3. Evidence-linked growth framework - Idea: map frameworks to real "
+            "notes. Why: evidence-backed coaching is more credible. Proposal: "
+            "organize note evidence into growth dimensions and highlight gaps."
+        )
+
+    monkeypatch.setattr(product_manager_module, "run_deep_agent", _fake_run_deep_agent)
+
+    handler = build_product_manager_handler()
+    execution = await handler(
+        WorkflowContext(
+            thread_key="discord-thread-1",
+            current_agent=AgentRole.PRODUCT_MANAGER,
+            user_message="unused for handoff-driven demo stage",
+            transcript=(),
+            trigger=DiscordTriggerContext(
+                discord_server_id="discord-server-1",
+                discord_user_id="user-1",
+                channel_id=10,
+                thread_id="discord-thread-1",
+                message_id=99,
+                thread_key="discord-thread-1",
+                dispatch_reason="direct_bot_mention",
+            ),
+            toolset=AgentToolset(),
+            response_emitter=lambda chunk: None,
+            handoff_context=serialize_demo_handoff(
+                stage=RESEARCH_FINDINGS_STAGE,
+                artifact=(
+                    "Research synthesis saved to Notion: "
+                    "https://www.notion.so/user-interview-synthesis"
+                ),
+            ),
+        )
+    )
+
+    demo_payload = parse_demo_handoff(execution.handoffs[0].reason)
+    assert demo_payload is not None
+    assert demo_payload.stage == OPTIONS_SUMMARY_STAGE
+    assert captured_emitters == [None]
 
 
 @pytest.mark.asyncio

@@ -6,7 +6,11 @@ from dataclasses import replace
 from langchain_core.language_models.chat_models import BaseChatModel
 
 import pixie
-from pixie_for_pm.agents.deep_agent import DEFAULT_DEEP_AGENT_MODEL, run_deep_agent
+from pixie_for_pm.agents.deep_agent import (
+    DEFAULT_DEEP_AGENT_MODEL,
+    build_notion_tool_guidance,
+    run_deep_agent,
+)
 from pixie_for_pm.agents.demo_flow import (
     BLOCKED_STATUS,
     RESEARCH_BRIEF_STAGE,
@@ -252,20 +256,9 @@ def _build_execution_context(context: WorkflowContext) -> str:
                 "- Update Notion with transcript tagging and the final synthesis "
                 "artifacts before concluding."
             ),
-            (
-                "- Before using Notion write tools, inspect the schema and include "
-                "every required parameter exactly. For update_content, provide "
-                "content_updates explicitly."
-            ),
-            (
-                "- Search Notion first before calling `notion_notion-fetch`; only "
-                "reuse an exact page or database ID, or a canonical "
-                "https://www.notion.so/... URL returned by a prior Notion tool "
-                "result."
-            ),
-            (
-                "- Do not invent notion:// locators, slugs, or local docs paths "
-                "for Notion fetch calls."
+            *build_notion_tool_guidance(
+                fetch_tool_name="notion_notion-fetch",
+                include_write_schema_guidance=True,
             ),
             "Connected integrations:",
             integrations,
@@ -282,6 +275,11 @@ def _build_demo_execution_context(context: WorkflowContext, *, brief: str) -> st
             (
                 "Return the retention findings as a concise internal "
                 "synthesis the PM can use immediately."
+            ),
+            (
+                "If you successfully save the synthesis in Notion, end with "
+                "`Notion synthesis URL: <canonical notion url>` so the PM can "
+                "share it back to the user."
             ),
         )
     )

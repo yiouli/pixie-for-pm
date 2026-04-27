@@ -99,6 +99,8 @@ This keeps the runtime strongly typed while avoiding any local MCP server proces
 - A successful tool invocation updates `last_used_at` for the underlying connection.
 - Runtime progress updates should be best-effort UX signals; losing a status update must not fail the underlying Discord turn.
 - Placeholder agent handlers can ignore the tool bundle, but real LangGraph agents can pass `toolset.as_langgraph_tools()` directly into their constructor.
+- Agents that fetch Notion content must search first and then reuse an exact page/database ID or a canonical `https://www.notion.so/...` URL returned by a prior tool result; they must not invent `notion://` locators or local docs paths.
+- Retention-demo prototype deployments must target a fresh Next.js Vercel project name for the current thread instead of reusing the first existing project returned by the Vercel workspace.
 
 ## Discord UX Contract
 
@@ -113,6 +115,8 @@ For message-triggered turns, the Discord adapter should:
 
 - The coordinator is the only agent allowed to decide the next handoff destination.
 - Non-coordinator agents return artifacts or blockers through private handoff context instead of producing public Discord messages.
+- Public Discord reply text must be authored by the coordinator from workflow context or structured specialist artifacts; specialists should not hand back prewritten final user messages.
+- When a workflow needs deterministic follow-up parsing, the coordinator should still own the visible wording while specialists return structured fields that preserve the machine-readable state needed for the next turn.
 - The runtime may therefore emit extra status updates when work returns to the coordinator for another routing decision inside the same turn.
 
 ## Code Changes

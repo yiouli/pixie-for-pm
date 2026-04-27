@@ -8,6 +8,7 @@ from pydantic import BaseModel, Field
 
 from pixie_for_pm.agents.registry import (
     AgentHandler,
+    build_coordinator_handler,
     build_product_designer_handler,
     build_product_manager_handler,
     build_user_researcher_handler,
@@ -625,6 +626,7 @@ async def test_orchestrator_runs_retention_demo_discovery_and_deep_dive_flow(
     tmp_path: Path,
 ) -> None:
     thread_id = "discord-thread-demo"
+    tool_calls: list[dict[str, str]] = []
 
     async def _notion_create_pages(pages: list[dict[str, object]]) -> str:
         assert pages[0]["properties"]["title"] == "Retention Demo PRD - Option #2"
@@ -633,16 +635,18 @@ async def test_orchestrator_runs_retention_demo_discovery_and_deep_dive_flow(
             '"url":"34f9952098ec810199ddd02c431566ed","type":"page"}]}'
         )
 
-    async def _vercel_list_projects(team_name: str | None = None) -> str:
-        del team_name
-        return "pixie-retention-demo"
-
     async def _vercel_create_deployment(
         project_name: str,
         deployment_summary: str,
     ) -> str:
-        assert project_name == "pixie-retention-demo"
-        assert deployment_summary != ""
+        tool_calls.append(
+            {
+                "project_name": project_name,
+                "deployment_summary": deployment_summary,
+            }
+        )
+        assert project_name == "pixie-retention-demo-discord-thread-demo"
+        assert "new next.js project" in deployment_summary.lower()
         return "https://pixie-retention-demo-eval.vercel.app"
 
     initializer = _StaticToolsetInitializer(
@@ -653,12 +657,6 @@ async def test_orchestrator_runs_retention_demo_discovery_and_deep_dive_flow(
                     name="notion_notion-create-pages",
                     description="Create Notion pages.",
                     args_schema=_NotionCreatePagesArgs,
-                ),
-                StructuredTool.from_function(
-                    coroutine=_vercel_list_projects,
-                    name="vercel_list_projects",
-                    description="List Vercel projects.",
-                    args_schema=_VercelListProjectsArgs,
                 ),
                 StructuredTool.from_function(
                     coroutine=_vercel_create_deployment,
@@ -682,7 +680,7 @@ async def test_orchestrator_runs_retention_demo_discovery_and_deep_dive_flow(
                     auth_type="oauth2",
                     status="active",
                     scopes=("projects.read", "deployments.write"),
-                    tool_names=("vercel_list_projects", "vercel_create_deployment"),
+                    tool_names=("vercel_create_deployment",),
                 ),
             ),
         )
@@ -691,15 +689,51 @@ async def test_orchestrator_runs_retention_demo_discovery_and_deep_dive_flow(
     async with PixieOrchestrator(
         checkpoint_path=tmp_path / "retention-demo.sqlite",
         agent_handlers={
+            AgentRole.COORDINATOR: build_coordinator_handler(
+                model=_ToolCallingFakeListChatModel(
+                    responses=[
+                        (
+                            "I’ll review the user interviews first, then I’ll come "
+                            "back with the strongest next-build options."
+                        ),
+                        (
+                            "1. Growth follow-up nudges in 1:1 prep\n"
+                            "2. Per-report career conversation brief\n"
+                            "3. Evidence-linked growth framework\n\n"
+                            "If one looks promising, tell me which option you want me "
+                            "to turn into a PRD. I also saved the full user interview "
+                            "synthesis here: https://www.notion.so/user-interview-synthesis"
+                        ),
+                        "I’m drafting the PRD for option #2 now.",
+                        (
+                            "The PRD for option #2 is ready here: "
+                            "https://www.notion.so/34f9952098ec810199ddd02c431566ed\n"
+                            "Want me to turn that into a quick clickable prototype next?"
+                        ),
+                        "I’m turning it into a quick clickable prototype now.",
+                        (
+                            "The prototype is live at "
+                            "https://pixie-retention-demo-eval.vercel.app. It focuses "
+                            "on the weekly habit loop and follow-through flow. Let me "
+                            "know what you want changed."
+                        ),
+                    ]
+                )
+            ),
             AgentRole.PRODUCT_MANAGER: build_product_manager_handler(
                 model=_ToolCallingFakeListChatModel(
                     responses=[
-                        "Here are three hypotheses to improve feature X retention:\n"
-                        "1. Tighten onboarding around the first weekly success.\n"
-                        "2. Add guided weekly habit loops for repeat value.\n"
-                        "3. Create manager nudges when teams stall.\n\n"
-                        "I would start with #2. Which direction do you want me to "
-                        "deepen?",
+                        "1. Growth follow-up nudges in 1:1 prep - Idea: surface a "
+                        "specific pre-1:1 nudge when a growth thread is unresolved. "
+                        "Why: this lands at the moment a manager can act. Proposal: "
+                        "detect open growth topics and suggest one follow-up question.\n"
+                        "2. Per-report career conversation brief - Idea: generate a "
+                        "concise brief for one report. Why: it reduces prep friction. "
+                        "Proposal: summarize themes, evidence, and one next step.\n"
+                        "3. Evidence-linked growth framework - Idea: connect coaching "
+                        "frameworks to note evidence. Why: evidence-backed guidance is "
+                        "more credible. Proposal: organize note evidence into growth "
+                        "dimensions and highlight gaps.",
                         "Problem statement\nUsers do not build a repeat weekly habit.\n\n"
                         "Goals and non-goals\nIncrease weekly repeat usage without "
                         "adding noisy reminders.",
@@ -715,7 +749,8 @@ async def test_orchestrator_runs_retention_demo_discovery_and_deep_dive_flow(
                     responses=[
                         "Research synthesis: users understand the core value after the "
                         "first session, but they lack a clear reason to come back in "
-                        "week two without a guided recurring loop."
+                        "week two without a guided recurring loop. Notion synthesis "
+                        "URL: https://www.notion.so/user-interview-synthesis"
                     ]
                 )
             ),
@@ -782,18 +817,20 @@ async def test_orchestrator_runs_retention_demo_discovery_and_deep_dive_flow(
         AgentRole.COORDINATOR,
     ]
     assert "user interviews" in first_result.transcript[0].content.lower()
-    first_turn_content = first_result.transcript[-1].content.lower()
-    assert first_turn_content.startswith("1. ")
-    assert (
-        "which direction do you want me to deepen" in first_turn_content
-        or "which option should i deepen next" in first_turn_content
+    assert first_result.transcript[-1].content == (
+        "1. Growth follow-up nudges in 1:1 prep\n"
+        "2. Per-report career conversation brief\n"
+        "3. Evidence-linked growth framework\n\n"
+        "If one looks promising, tell me which option you want me to turn into a PRD. "
+        "I also saved the full user interview synthesis here: "
+        "https://www.notion.so/user-interview-synthesis"
     )
 
     assert [message.agent for message in second_result.transcript] == [
         AgentRole.COORDINATOR,
         AgentRole.COORDINATOR,
     ]
-    assert second_result.transcript[0].content.lower() == "sure. let me do that"
+    assert "drafting the prd" in second_result.transcript[0].content.lower()
     second_turn_content = second_result.transcript[-1].content
     assert "PRD for option #2" in second_turn_content
     assert (
@@ -805,8 +842,134 @@ async def test_orchestrator_runs_retention_demo_discovery_and_deep_dive_flow(
         AgentRole.COORDINATOR,
         AgentRole.COORDINATOR,
     ]
-    assert third_result.transcript[0].content.lower() == "on it."
+    assert "clickable prototype" in third_result.transcript[0].content.lower()
     third_turn_content = third_result.transcript[-1].content
     assert "prototype" in third_turn_content.lower()
     assert "https://pixie-retention-demo-eval.vercel.app" in third_turn_content
-    assert "let me know what you think" in third_turn_content.lower()
+    assert "let me know what you want changed" in third_turn_content.lower()
+    assert tool_calls == [
+        {
+            "project_name": "pixie-retention-demo-discord-thread-demo",
+            "deployment_summary": (
+                "Create a new Next.js project named "
+                "pixie-retention-demo-discord-thread-demo for this clickable "
+                "prototype. Prototype summary: published a clickable Vercel concept "
+                "for a weekly habit loop with a progress rail, next-step CTA, and "
+                "team checkpoint screen."
+            ),
+        }
+    ]
+
+
+@pytest.mark.asyncio
+async def test_orchestrator_retention_demo_does_not_stream_specialist_drafts(
+    tmp_path: Path,
+) -> None:
+    thread_id = "discord-thread-demo"
+    streamed_chunks: list[str] = []
+
+    async def _notion_create_pages(pages: list[dict[str, object]]) -> str:
+        del pages
+        return "https://www.notion.so/user-interview-synthesis"
+
+    initializer = _StaticToolsetInitializer(
+        AgentToolset(
+            tools=(
+                StructuredTool.from_function(
+                    coroutine=_notion_create_pages,
+                    name="notion_notion-create-pages",
+                    description="Create Notion pages.",
+                    args_schema=_NotionCreatePagesArgs,
+                ),
+            ),
+            integrations=(
+                ConnectedIntegration(
+                    provider_id="notion",
+                    provider_name="Notion",
+                    auth_type="oauth2",
+                    status="active",
+                    scopes=("write_content",),
+                    tool_names=("notion_notion-create-pages",),
+                ),
+            ),
+        )
+    )
+
+    async with PixieOrchestrator(
+        checkpoint_path=tmp_path / "retention-demo-streaming.sqlite",
+        agent_handlers={
+            AgentRole.COORDINATOR: build_coordinator_handler(
+                model=_ToolCallingFakeListChatModel(
+                    responses=[
+                        (
+                            "I’ll review the user interviews first, then I’ll come "
+                            "back with the strongest next-build options."
+                        ),
+                        (
+                            "1. Growth follow-up nudges in 1:1 prep\n"
+                            "2. Per-report career conversation brief\n"
+                            "3. Evidence-linked growth framework\n\n"
+                            "If one looks promising, tell me which option you want me "
+                            "to turn into a PRD. I also saved the full user interview "
+                            "synthesis here: https://www.notion.so/user-interview-synthesis"
+                        ),
+                    ]
+                )
+            ),
+            AgentRole.PRODUCT_MANAGER: build_product_manager_handler(
+                model=_ToolCallingFakeListChatModel(
+                    responses=[
+                        "1. Growth follow-up nudges in 1:1 prep - Idea: surface a "
+                        "specific pre-1:1 nudge when a growth thread is unresolved. "
+                        "Why: this lands at the moment a manager can act. Proposal: "
+                        "detect open growth topics and suggest one follow-up question.\n"
+                        "2. Per-report career conversation brief - Idea: generate a "
+                        "concise brief for one report. Why: it reduces prep friction. "
+                        "Proposal: summarize themes, evidence, and one next step.\n"
+                        "3. Evidence-linked growth framework - Idea: connect coaching "
+                        "frameworks to note evidence. Why: evidence-backed guidance is "
+                        "more credible. Proposal: organize note evidence into growth "
+                        "dimensions and highlight gaps."
+                    ]
+                )
+            ),
+            AgentRole.USER_RESEARCHER: build_user_researcher_handler(
+                model=_ToolCallingFakeListChatModel(
+                    responses=[
+                        "Research synthesis: users understand the core value after the "
+                        "first session, but they lack a clear reason to come back in "
+                        "week two without a guided recurring loop. Notion synthesis "
+                        "URL: https://www.notion.so/user-interview-synthesis"
+                    ]
+                )
+            ),
+        },
+        toolset_initializer=initializer,
+    ) as orchestrator:
+        result = await orchestrator.dispatch(
+            build_dispatch_request(
+                IncomingDiscordMessage(
+                    discord_message_id=19,
+                    discord_server_id="discord-server-demo",
+                    channel_id=29,
+                    thread_id=thread_id,
+                    author_id=38,
+                    content=(
+                        "It seems that feature X retention is low. What should we "
+                        "build next to improve that?"
+                    ),
+                    directly_mentions_bot=True,
+                    is_reply_to_bot=False,
+                )
+            ),
+            response_emitter=streamed_chunks.append,
+        )
+
+    assert [message.agent for message in result.transcript] == [
+        AgentRole.COORDINATOR,
+        AgentRole.COORDINATOR,
+    ]
+    streamed_text = "".join(streamed_chunks)
+    assert "idea:" not in streamed_text.lower()
+    assert "proposal:" not in streamed_text.lower()
+    assert "which option you want me to turn into a prd" in streamed_text.lower()
